@@ -6,6 +6,7 @@ import { HashRouter } from 'react-router';
 import App from './App';
 import { ApiError } from './lib/api';
 import { AuthProvider } from './lib/auth';
+import { I18nProvider } from './i18n/I18nProvider';
 import './index.css';
 
 const queryClient = new QueryClient({
@@ -20,12 +21,14 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <HashRouter>
-          <App />
-        </HashRouter>
-      </AuthProvider>
-    </QueryClientProvider>
+    <I18nProvider>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <HashRouter>
+            <App />
+          </HashRouter>
+        </AuthProvider>
+      </QueryClientProvider>
+    </I18nProvider>
   </StrictMode>,
 );

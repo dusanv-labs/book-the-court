@@ -94,14 +94,28 @@ export const api = {
     setHours: (body: OpeningHours[]) => request<OpeningHours[]>('/admin/venue/hours', { method: 'PUT', body, token }),
     prices: () => request<PriceRule[]>('/venue/prices'),
     setPrices: (body: PriceRule[]) => request<PriceRule[]>('/admin/venue/prices', { method: 'PUT', body, token }),
-    blocks: (date: string) => request<Block[]>(`/admin/venue/blocks${q({ date })}`, { token }),
+    blocks: (date?: string) => request<Block[]>(`/admin/venue/blocks${date ? q({ date }) : ''}`, { token }),
     createBlock: (body: { courtId: string | null; startsAt: string; endsAt: string; reason: string }) =>
       request<Block>('/admin/venue/blocks', { method: 'POST', body, token }),
     deleteBlock: (id: string) => request<void>(`/admin/venue/blocks/${id}`, { method: 'DELETE', token }),
   }),
 };
 
-export function errorText(error: unknown): string {
-  if (error instanceof ApiError) return error.messages.join(' ');
-  return 'Something went wrong. Please try again.';
+interface ErrorMessages {
+  network: string;
+  conflict: string;
+  tooMany: string;
+  invalidLogin: string;
+  generic: string;
+}
+
+/** User-facing error text in the current language. Server validation messages are shown as-is. */
+export function errorText(error: unknown, m: ErrorMessages): string {
+  if (!(error instanceof ApiError)) return m.generic;
+  if (error.status === 0) return m.network;
+  if (error.status === 409) return m.conflict;
+  if (error.status === 429) return m.tooMany;
+  if (error.status === 401) return m.invalidLogin;
+  if (error.status >= 500) return m.generic;
+  return error.messages.join(' ');
 }

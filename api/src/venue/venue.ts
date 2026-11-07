@@ -75,7 +75,8 @@ const createBlockSchema = z
   })
   .refine((b) => b.endsAt > b.startsAt, 'endsAt must be after startsAt');
 
-const blocksQuerySchema = z.object({ date: dateSchema });
+// With a date: blocks on that local day. Without: all upcoming blocks.
+const blocksQuerySchema = z.object({ date: dateSchema.optional() });
 
 @Injectable()
 export class VenueService {
@@ -106,6 +107,15 @@ export class VenueService {
   async setPriceRules(rules: z.infer<typeof priceRulesSchema>) {
     await this.prisma.$transaction([this.prisma.priceRule.deleteMany(), this.prisma.priceRule.createMany({ data: rules })]);
     return this.priceRules();
+  }
+
+  upcomingBlocks() {
+    return this.prisma.block.findMany({
+      where: { endsAt: { gt: new Date() } },
+      orderBy: { startsAt: 'asc' },
+      take: 200,
+      include: { court: { select: { id: true, name: true } } },
+    });
   }
 
   blocksOn(date: string) {
@@ -182,7 +192,7 @@ export class AdminVenueController {
 
   @Get('blocks')
   blocks(@Query({ schema: blocksQuerySchema }) query: z.infer<typeof blocksQuerySchema>) {
-    return this.venue.blocksOn(query.date);
+    return query.date ? this.venue.blocksOn(query.date) : this.venue.upcomingBlocks();
   }
 
   @Post('blocks')

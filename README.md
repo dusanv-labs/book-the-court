@@ -21,15 +21,20 @@ The demo database is reset every night, so feel free to book, cancel and change 
 ## Features
 
 **Players**
-- Pick a sport and a day, then see a courts × hours availability grid
-- Book a court for 60, 90 or 120 minutes with the price shown upfront
-- Get a booking code and a cancellation link
+- Three simple steps: sport → day → start time, with free start times shown as large buttons per court
+- Filter by morning, afternoon or evening; a "next day" shortcut when a day is full
+- Choose 60, 90 or 120 minutes with the price of each option shown upfront
+- Booking code, private manage/cancel link and **Add to calendar** (.ics)
+- Optional "remember my details" for faster repeat bookings
+- English and Serbian, detected from the browser and switchable at any time
 
 **Venue owner (admin)**
-- Manage courts (sport, indoor/outdoor) and opening hours
-- Pricing rules: daytime, evening and weekend rates
-- Block slots for maintenance or tournaments
-- Daily bookings overview with cancellation
+- Daily bookings with quick day switching, search (code, name, email, phone) and status filter
+- New bookings for phone or walk-in customers, using the same booking flow
+- Courts: rename, change sport or type, activate/deactivate
+- Opening hours (with "copy Monday to all weekdays") and price rules with warnings for gaps and overlaps
+- Block time on one or all courts, with a list of all upcoming blocks
+- Styled confirmation dialogs and toast notifications instead of browser pop-ups
 
 **Engineering highlights**
 - Double booking prevented at the database level (PostgreSQL exclusion constraint)

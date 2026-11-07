@@ -16,14 +16,14 @@ export function addDays(date: string, days: number): string {
 }
 
 /** "Mon", "12" and "Nov" parts for a YYYY-MM-DD date. */
-export function dateParts(date: string) {
+export function dateParts(date: string, locale = 'en-GB') {
   const d = new Date(`${date}T12:00:00Z`);
-  const f = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', ...o }).format(d);
+  const f = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat(locale, { timeZone: 'UTC', ...o }).format(d);
   return { weekday: f({ weekday: 'short' }), day: f({ day: 'numeric' }), month: f({ month: 'short' }) };
 }
 
-export function formatDateLong(date: string): string {
-  return new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' }).format(
+export function formatDateLong(date: string, locale = 'en-GB'): string {
+  return new Intl.DateTimeFormat(locale, { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' }).format(
     new Date(`${date}T12:00:00Z`),
   );
 }
@@ -36,10 +36,15 @@ export function formatTime(iso: string, tz: string = VENUE_TZ): string {
 }
 
 /** "Thursday, 12 November" for an ISO instant, in the venue time zone. */
-export function formatDayOf(iso: string, tz: string = VENUE_TZ): string {
-  return new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long' }).format(
+export function formatDayOf(iso: string, tz: string = VENUE_TZ, locale = 'en-GB'): string {
+  return new Intl.DateTimeFormat(locale, { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long' }).format(
     new Date(iso),
   );
+}
+
+/** Local calendar date (YYYY-MM-DD) of an ISO instant in the venue time zone. */
+export function toLocalDate(iso: string, tz: string = VENUE_TZ): string {
+  return todayIn(tz, new Date(iso));
 }
 
 export function minuteLabel(minute: number): string {

@@ -1,4 +1,5 @@
-import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useState, type ComponentProps, type ReactNode } from 'react';
+import { useI18n } from '../i18n/context';
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
 
@@ -13,7 +14,7 @@ export function Button({
   variant = 'primary',
   className = '',
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
+}: ComponentProps<'button'> & { variant?: Variant }) {
   return (
     <button
       type="button"
@@ -57,6 +58,7 @@ export function SuccessMessage({ children }: { children: ReactNode }) {
  * sleeps when idle and needs up to a minute to wake up.
  */
 export function SlowNotice() {
+  const { m } = useI18n();
   const [show, setShow] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setShow(true), 4000);
@@ -65,7 +67,7 @@ export function SlowNotice() {
   if (!show) return null;
   return (
     <p className="mt-3 text-sm text-slate-500">
-      The demo server is waking up after being idle. This can take up to a minute on the first visit.
+      {m.common.slowServer}
     </p>
   );
 }

@@ -175,4 +175,19 @@ describe('admin', () => {
     expect(ours.length).toBeGreaterThan(0);
     expect(ours[0]).toHaveProperty('customerEmail');
   });
+
+  it('creates a block, lists it as upcoming, and removes it', async () => {
+    const server = app.getHttpServer();
+    const login = await request(server).post('/api/auth/login').send({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
+    const auth = { Authorization: `Bearer ${login.body.accessToken}` };
+    const created = await request(server)
+      .post('/api/admin/venue/blocks')
+      .set(auth)
+      .send({ courtId, startsAt: at(8), endsAt: at(9), reason: 'E2E maintenance' })
+      .expect(201);
+    const upcoming = await request(server).get('/api/admin/venue/blocks').set(auth).expect(200);
+    expect(upcoming.body.map((b: { id: string }) => b.id)).toContain(created.body.id);
+    await request(server).post('/api/bookings').send(bookingBody(at(8))).expect(409);
+    await request(server).delete(`/api/admin/venue/blocks/${created.body.id}`).set(auth).expect(204);
+  });
 });
