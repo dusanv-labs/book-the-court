@@ -1,29 +1,178 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import 'dotenv/config';
+import { Test } from '@nestjs/testing';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
-import { App } from 'supertest/types.js';
-import { AppModule } from './../src/app.module.js';
+import { AppModule } from '../src/app.module.js';
+import { hashPassword } from '../src/auth/password.js';
+import { localToUtc, toLocalParts } from '../src/common/time.js';
+import { isOverlapViolation, PrismaService } from '../src/prisma/prisma.service.js';
+import { ensureVenueDefaults } from '../src/seed-data.js';
+import { setupApp } from '../src/setup-app.js';
 
-describe('AppController (e2e)', () => {
-  let app: INestApplication<App>;
+/**
+ * End-to-end tests against a real PostgreSQL database (DATABASE_URL).
+ * They create their own court and admin user and remove them afterwards.
+ */
+const TZ = process.env.TIMEZONE ?? 'Europe/Belgrade';
+const ADMIN_EMAIL = `e2e-admin-${Date.now()}@example.com`;
+const ADMIN_PASSWORD = `e2e-${Math.random().toString(36).slice(2)}-pw`;
 
-  beforeEach(async () => {
-    const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
+let app: NestExpressApplication;
+let prisma: PrismaService;
+let courtId: string;
 
-    app = moduleFixture.createNestApplication();
-    await app.init();
+/** A weekday about a week from now (so it is never in the past and always within the booking window). */
+function futureWeekday(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + 7);
+  while ([0, 6].includes(toLocalParts(d, TZ).dayOfWeek)) d.setUTCDate(d.getUTCDate() + 1);
+  return toLocalParts(d, TZ).date;
+}
+const DATE = futureWeekday();
+const at = (hour: number, minute = 0) => localToUtc(DATE, hour * 60 + minute, TZ).toISOString();
+
+const bookingBody = (startsAt: string, durationMinutes = 60) => ({
+  courtId,
+  startsAt,
+  durationMinutes,
+  customerName: 'E2E Player',
+  customerEmail: 'e2e@example.com',
+  customerPhone: '+381 60 123 4567',
+});
+
+beforeAll(async () => {
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  app = moduleRef.createNestApplication<NestExpressApplication>();
+  setupApp(app);
+  await app.init();
+  prisma = app.get(PrismaService);
+  await ensureVenueDefaults(prisma);
+  // Make sure the test date is open 08:00-23:00 regardless of existing data.
+  await prisma.openingHours.update({
+    where: { dayOfWeek: toLocalParts(new Date(at(12)), TZ).dayOfWeek },
+    data: { openMinute: 8 * 60, closeMinute: 23 * 60, closed: false },
+  });
+  const court = await prisma.court.create({ data: { name: `E2E Court ${Date.now()}`, sport: 'PADEL', sortOrder: 999 } });
+  courtId = court.id;
+  await prisma.adminUser.create({ data: { email: ADMIN_EMAIL, passwordHash: await hashPassword(ADMIN_PASSWORD) } });
+});
+
+afterAll(async () => {
+  await prisma.booking.deleteMany({ where: { courtId } });
+  await prisma.court.deleteMany({ where: { id: courtId } });
+  await prisma.adminUser.deleteMany({ where: { email: ADMIN_EMAIL } });
+  await app.close();
+});
+
+describe('health', () => {
+  it('reports the API and database as healthy', async () => {
+    const res = await request(app.getHttpServer()).get('/api/health').expect(200);
+    expect(res.body).toMatchObject({ status: 'ok', database: 'ok' });
+  });
+});
+
+describe('booking flow', () => {
+  it('shows the test court as free in the availability grid', async () => {
+    const res = await request(app.getHttpServer()).get(`/api/availability?date=${DATE}&sport=PADEL`).expect(200);
+    const court = res.body.courts.find((c: { id: string }) => c.id === courtId);
+    expect(court.slots.length).toBe(30);
+    expect(court.slots.every((s: { status: string }) => s.status === 'free')).toBe(true);
   });
 
-  it('/ (GET)', () => {
-    return request(app.getHttpServer())
-      .get('/')
-      .expect(200)
-      .expect('Hello World!');
+  it('quotes, books, rejects a double booking, and frees the slot after cancelling', async () => {
+    const server = app.getHttpServer();
+    const quote = await request(server)
+      .get(`/api/bookings/quote?courtId=${courtId}&startsAt=${encodeURIComponent(at(16, 30))}&durationMinutes=90`)
+      .expect(200);
+    expect(quote.body.price).toBe(1200 + 3200); // 30 min daytime + 60 min evening rate
+
+    const created = await request(server).post('/api/bookings').send(bookingBody(at(16, 30), 90)).expect(201);
+    expect(created.body.code).toMatch(/^[A-Z2-9]{6}$/);
+    expect(created.body.price).toBe(4400);
+
+    await request(server).post('/api/bookings').send(bookingBody(at(17), 60)).expect(409);
+
+    const token = created.body.cancelToken;
+    const manage = await request(server).get(`/api/bookings/manage/${token}`).expect(200);
+    expect(manage.body).toMatchObject({ status: 'CONFIRMED', canCancel: true });
+
+    await request(server).post(`/api/bookings/manage/${token}/cancel`).expect(200);
+    await request(server).post('/api/bookings').send(bookingBody(at(17), 60)).expect(201);
   });
 
-  afterEach(async () => {
-    await app.close();
+  it('validates input and business rules', async () => {
+    const server = app.getHttpServer();
+    const bad = await request(server)
+      .post('/api/bookings')
+      .send({ ...bookingBody(at(10)), customerEmail: 'not-an-email', durationMinutes: 45 })
+      .expect(400);
+    expect(bad.body.message).toEqual(
+      expect.arrayContaining([expect.stringContaining('customerEmail'), expect.stringContaining('durationMinutes')]),
+    );
+    await request(server).post('/api/bookings').send(bookingBody(at(10, 15))).expect(400); // not aligned
+    await request(server).post('/api/bookings').send(bookingBody(at(22, 30))).expect(400); // past closing
+  });
+});
+
+describe('double booking protection', () => {
+  it('accepts exactly one of many simultaneous requests for the same slot', async () => {
+    const server = app.getHttpServer();
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => request(server).post('/api/bookings').send(bookingBody(at(12)))),
+    );
+    const statuses = results.map((r) => r.status).sort();
+    expect(statuses.filter((s) => s === 201)).toHaveLength(1);
+    expect(statuses.filter((s) => s === 409)).toHaveLength(7);
+  });
+
+  it('is enforced by the database itself, not only by application checks', async () => {
+    const data = {
+      courtId,
+      startsAt: new Date(at(14)),
+      endsAt: new Date(at(15)),
+      customerName: 'Direct insert',
+      customerEmail: 'direct@example.com',
+      customerPhone: '+381 60 000 0000',
+      price: 2400,
+    };
+    await prisma.booking.create({ data: { ...data, code: 'E2EAA1', cancelToken: 'e2e-token-aaaaaaaaaaaaaaaaaaaaaaaaa' } });
+    const error = await prisma.booking
+      .create({
+        data: {
+          ...data,
+          startsAt: new Date(at(14, 30)),
+          endsAt: new Date(at(15, 30)),
+          code: 'E2EAA2',
+          cancelToken: 'e2e-token-bbbbbbbbbbbbbbbbbbbbbbbbb',
+        },
+      })
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(error).not.toBeNull();
+    expect(isOverlapViolation(error)).toBe(true);
+  });
+});
+
+describe('admin', () => {
+  it('rejects requests without a valid token', async () => {
+    await request(app.getHttpServer()).get('/api/admin/courts').expect(401);
+    await request(app.getHttpServer()).get('/api/admin/courts').set('Authorization', 'Bearer invalid').expect(401);
+  });
+
+  it('logs in and lists the day bookings with customer details', async () => {
+    const server = app.getHttpServer();
+    const wrong = { email: ADMIN_EMAIL, password: 'wrong-password' }; // pragma: allowlist secret
+    await request(server).post('/api/auth/login').send(wrong).expect(401);
+    const login = await request(server)
+      .post('/api/auth/login')
+      .send({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
+      .expect(200);
+    const res = await request(server)
+      .get(`/api/admin/bookings?date=${DATE}`)
+      .set('Authorization', `Bearer ${login.body.accessToken}`)
+      .expect(200);
+    const ours = res.body.filter((b: { court: { id: string } }) => b.court.id === courtId);
+    expect(ours.length).toBeGreaterThan(0);
+    expect(ours[0]).toHaveProperty('customerEmail');
   });
 });

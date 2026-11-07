@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   build-and-test:
+    name: Lint, unit tests, build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,3 +22,33 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+
+  e2e:
+    name: End-to-end tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: btc
+          POSTGRES_PASSWORD: btc
+          POSTGRES_DB: btc
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U btc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Throwaway values for the CI-only database; not used anywhere else.
+      DATABASE_URL: postgresql://btc:btc@localhost:5432/btc
+      JWT_SECRET: ci-only-throwaway-signing-key-0123456789
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate -w api
+      - run: npm run test:e2e -w api

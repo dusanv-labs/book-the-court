@@ -40,3 +40,6 @@ desktop.ini
 
 # TypeScript build info
 *.tsbuildinfo
+
+# Generated Prisma client
+api/src/generated/

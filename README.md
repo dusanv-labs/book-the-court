@@ -33,16 +33,37 @@ A sports court booking system: players see free courts by the hour and book them
 
 ## Running locally
 
-Requirements: Node.js 22+.
+Requirements: Node.js 22+ and a PostgreSQL database (for example a free [Neon](https://neon.tech) project).
 
 ```bash
 npm install
-cp api/.env.example api/.env   # then fill in the values
-npm run dev:api                # http://localhost:3000
-npm run dev:web                # http://localhost:5173
+cp api/.env.example api/.env        # then fill in DATABASE_URL, JWT_SECRET and the seed admin
+npm run db:migrate -w api           # create tables and constraints
+npm run build -w api
+npm run db:seed -w api -- --demo    # demo courts, hours, prices, admin user, sample bookings
+npm run dev:api                     # http://localhost:3000/api  (docs: /api/docs)
+npm run dev:web                     # http://localhost:5173
 ```
 
-Other scripts: `npm run lint`, `npm test`, `npm run build`.
+Other scripts: `npm run lint`, `npm test` (unit), `npm run test:e2e` (against a real database), `npm run build`.
+
+## API overview
+
+Interactive OpenAPI docs are served at `/api/docs`.
+
+| Area | Endpoints |
+|---|---|
+| Public | `GET /api/courts`, `GET /api/availability`, `GET /api/venue/hours`, `GET /api/venue/prices` |
+| Booking | `GET /api/bookings/quote`, `POST /api/bookings`, `GET /api/bookings/manage/:token`, `POST /api/bookings/manage/:token/cancel` |
+| Auth | `POST /api/auth/login` |
+| Admin (JWT) | `/api/admin/courts`, `/api/admin/venue/hours`, `/api/admin/venue/prices`, `/api/admin/venue/blocks`, `/api/admin/bookings` |
+
+## How double booking is prevented
+
+1. The API checks availability before creating a booking (friendly error messages).
+2. PostgreSQL enforces it with an exclusion constraint on `(court, time range)` for confirmed bookings, so even simultaneous requests cannot both succeed. An end-to-end test fires 8 parallel requests for the same slot and expects exactly one to succeed.
+
+All times are stored in UTC; opening hours and prices are defined in the venue's local time (`Europe/Belgrade`), including daylight saving time changes.
 
 ## License
 

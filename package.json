@@ -2,13 +2,24 @@
   "name": "book-the-court",
   "private": true,
   "description": "Sports court booking system - NestJS API + React web app",
-  "workspaces": ["api", "web"],
+  "workspaces": [
+    "api",
+    "web"
+  ],
   "scripts": {
     "dev:api": "npm run start:dev -w api",
     "dev:web": "npm run dev -w web",
     "lint": "npm run lint -w api && npm run lint -w web",
     "test": "npm run test -w api",
+    "test:e2e": "npm run test:e2e -w api",
     "build": "npm run build -w api && npm run build -w web"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  },
+  "allowScripts": {
+    "@prisma/engines": true,
+    "prisma": true,
+    "@scarf/scarf": false
+  }
 }

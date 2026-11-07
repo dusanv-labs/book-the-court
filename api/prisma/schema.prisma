@@ -1,0 +1,108 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Sport {
+  PADEL
+  TENNIS
+  FOOTBALL
+}
+
+enum DayType {
+  WEEKDAY
+  WEEKEND
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+
+  @@map("admin_users")
+}
+
+model Court {
+  id        String   @id @default(uuid())
+  name      String
+  sport     Sport
+  indoor    Boolean  @default(false)
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  bookings Booking[]
+  blocks   Block[]
+
+  @@map("courts")
+}
+
+/// Venue opening hours per weekday (0 = Sunday ... 6 = Saturday), in minutes from local midnight.
+model OpeningHours {
+  dayOfWeek   Int     @id
+  openMinute  Int
+  closeMinute Int
+  closed      Boolean @default(false)
+
+  @@map("opening_hours")
+}
+
+/// Hourly price for a sport during [startMinute, endMinute) of a weekday or weekend day.
+model PriceRule {
+  id           String  @id @default(uuid())
+  sport        Sport
+  dayType      DayType
+  startMinute  Int
+  endMinute    Int
+  pricePerHour Int
+
+  @@index([sport, dayType])
+  @@map("price_rules")
+}
+
+model Booking {
+  id            String        @id @default(uuid())
+  code          String        @unique
+  cancelToken   String        @unique
+  courtId       String
+  court         Court         @relation(fields: [courtId], references: [id])
+  startsAt      DateTime      @db.Timestamptz(3)
+  endsAt        DateTime      @db.Timestamptz(3)
+  customerName  String
+  customerEmail String
+  customerPhone String
+  price         Int
+  status        BookingStatus @default(CONFIRMED)
+  createdAt     DateTime      @default(now())
+  cancelledAt   DateTime?
+
+  // An exclusion constraint (see migration) prevents overlapping CONFIRMED bookings per court.
+  @@index([courtId, startsAt])
+  @@map("bookings")
+}
+
+/// Time blocked by the venue (maintenance, tournaments). courtId = null blocks all courts.
+model Block {
+  id        String   @id @default(uuid())
+  courtId   String?
+  court     Court?   @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  startsAt  DateTime @db.Timestamptz(3)
+  endsAt    DateTime @db.Timestamptz(3)
+  reason    String
+  createdAt DateTime @default(now())
+
+  @@index([startsAt])
+  @@map("blocks")
+}
