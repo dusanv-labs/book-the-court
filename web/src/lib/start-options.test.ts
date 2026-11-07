@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { startOptions } from './start-options';
+import { allStartTimes, startOptions } from './start-options';
 import { addMonths, monthRange } from './time';
 import type { Availability, Slot } from './types';
 
@@ -46,6 +46,14 @@ describe('startOptions', () => {
     const options = startOptions(data('ffffff', 'bbbbff'), 60);
     const at19 = options.find((o) => o.time === '19:00');
     expect(at19?.courts.map((c) => c.name)).toEqual(['Padel 1', 'Padel 2']);
+  });
+});
+
+describe('allStartTimes', () => {
+  it('keeps unavailable times (with no courts) so they can be shown crossed out', () => {
+    const times = allStartTimes(data('ffbfff', 'bbbbff'), 90);
+    expect(times.map((t) => t.time)).toEqual(['17:00', '17:30', '18:00', '18:30', '19:00', '19:30']);
+    expect(times.filter((t) => t.courts.length > 0).map((t) => t.time)).toEqual(['18:30']);
   });
 });
 

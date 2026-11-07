@@ -86,6 +86,9 @@ export const en = {
     book: 'Book',
     noTimesForDuration: 'No free times for this duration on this day. Try a shorter duration or another day.',
     nextAvailable: 'Go to the next available day',
+    pickTimeHint: 'Tap a time to see the free courts.',
+    showHalfHours: 'Also show :30 times',
+    moreHalfHours: (n: number) => `+ ${n} more ${n === 1 ? 'time' : 'times'} at half past`,
   },
   dialog: {
     title: (court: string) => `Book ${court}`,
@@ -311,6 +314,9 @@ export const sr: Messages = {
     book: 'Rezerviši',
     noTimesForDuration: 'Za ovo trajanje nema slobodnih termina tog dana. Probajte kraće trajanje ili drugi dan.',
     nextAvailable: 'Idi na prvi slobodan dan',
+    pickTimeHint: 'Kliknite na vreme da vidite slobodne terene.',
+    showHalfHours: 'Prikaži i termine u pola sata',
+    moreHalfHours: (n: number) => `+ još ${n} ${plural(n, 'termin', 'termina', 'termina')} u pola sata`,
   },
   dialog: {
     title: (court: string) => `Rezervacija: ${court}`,
