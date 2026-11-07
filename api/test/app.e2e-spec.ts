@@ -120,7 +120,7 @@ describe('double booking protection', () => {
     const results = await Promise.all(
       Array.from({ length: 8 }, () => request(server).post('/api/bookings').send(bookingBody(at(12)))),
     );
-    const statuses = results.map((r) => r.status).sort();
+    const statuses = results.map((r) => r.status).sort((a, b) => a - b);
     expect(statuses.filter((s) => s === 201)).toHaveLength(1);
     expect(statuses.filter((s) => s === 409)).toHaveLength(7);
   });

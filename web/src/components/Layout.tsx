@@ -1,0 +1,57 @@
+import { Link, NavLink, Outlet } from 'react-router';
+
+export function Logo() {
+  return (
+    <Link to="/" className="flex items-center gap-2 font-bold tracking-tight text-slate-900">
+      <svg viewBox="0 0 32 32" className="h-8 w-8" aria-hidden="true">
+        <rect width="32" height="32" rx="8" fill="#059669" />
+        <rect x="7" y="7" width="18" height="18" rx="1.5" fill="none" stroke="#fff" strokeWidth="2" />
+        <path d="M16 7v18M7 16h18" stroke="#fff" strokeWidth="2" />
+      </svg>
+      <span className="text-lg">
+        Book<span className="text-emerald-600">The</span>Court
+      </span>
+    </Link>
+  );
+}
+
+const navClass = ({ isActive }: { isActive: boolean }) =>
+  `rounded-lg px-3 py-2 text-sm font-medium ${isActive ? 'bg-emerald-50 text-emerald-700' : 'text-slate-600 hover:bg-slate-100'}`;
+
+export function Layout() {
+  return (
+    <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900">
+      <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
+          <Logo />
+          <nav className="flex gap-1" aria-label="Main">
+            <NavLink to="/" end className={navClass}>
+              Book a court
+            </NavLink>
+            <NavLink to="/admin" className={navClass}>
+              Admin
+            </NavLink>
+          </nav>
+        </div>
+      </header>
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
+        <Outlet />
+      </main>
+      <footer className="border-t border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-6xl flex-col gap-1 px-4 py-5 text-sm text-slate-500 sm:flex-row sm:justify-between">
+          <p>BookTheCourt is a portfolio project. Bookings are demo data.</p>
+          <p>
+            By{' '}
+            <a className="font-medium text-emerald-700 hover:underline" href="https://dusanv-labs.github.io">
+              Dušan Vasić
+            </a>{' '}
+            ·{' '}
+            <a className="font-medium text-emerald-700 hover:underline" href="https://github.com/dusanv-labs/book-the-court">
+              Source code
+            </a>
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
+}

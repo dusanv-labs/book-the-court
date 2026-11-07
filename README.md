@@ -2,9 +2,9 @@
 
 A sports court booking system: players see free courts by the hour and book them online, and the venue owner manages courts, opening hours, pricing and bookings from an admin panel.
 
-> **Status:** in development. A live demo link will be added here.
+> **Status:** API and web app complete; the live demo link will be added here after deployment.
 
-## Planned features
+## Features
 
 **Players**
 - Pick a sport and a day, then see a courts × hours availability grid
