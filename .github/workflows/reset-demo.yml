@@ -1,0 +1,35 @@
+name: Reset demo data
+
+# The public demo has a shared admin login, so its data is restored every night.
+on:
+  schedule:
+    - cron: '0 2 * * *' # 02:00 UTC = 03:00/04:00 in Belgrade
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-database
+  cancel-in-progress: false
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      SEED_ADMIN_EMAIL: ${{ vars.DEMO_ADMIN_EMAIL }}
+      SEED_ADMIN_PASSWORD: ${{ vars.DEMO_ADMIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - name: Apply database migrations
+        run: npm run db:migrate -w api
+      - run: npm run build -w api
+      - name: Reset and seed demo data
+        run: npm run db:seed -w api -- --reset --demo

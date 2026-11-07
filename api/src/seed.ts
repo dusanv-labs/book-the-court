@@ -2,6 +2,7 @@
  * Seeds the database with a demo venue.
  *   npm run db:seed            courts, opening hours, prices, admin user (from env)
  *   npm run db:seed -- --demo  also adds sample bookings for the next days
+ *   npm run db:seed -- --reset --demo  wipes ALL data first (used by the nightly demo reset)
  * Admin credentials come from SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD; they are never hard-coded.
  */
 import 'dotenv/config';
@@ -55,10 +56,17 @@ async function seedDemoBookings() {
   const plan: [number, string, number, number][] = [
     [1, 'Padel 1', 18, 90],
     [1, 'Padel 2', 19, 60],
+    [1, 'Padel 3', 20, 120],
     [1, 'Tennis 1', 10, 60],
+    [1, 'Football 1', 18, 60],
     [2, 'Padel 1', 20, 120],
-    [2, 'Football 1', 18, 60],
+    [2, 'Padel 2', 17, 90],
+    [2, 'Tennis 2', 18, 60],
     [3, 'Padel 3', 17, 90],
+    [3, 'Padel 1', 11, 60],
+    [4, 'Padel 2', 19, 90],
+    [4, 'Football 1', 20, 60],
+    [5, 'Padel 1', 18, 120],
   ];
   let created = 0;
   for (const [days, courtName, hour, duration] of plan) {
@@ -84,8 +92,22 @@ async function seedDemoBookings() {
   console.log(`- Demo bookings: created ${created}`);
 }
 
+/** Deletes all data so the demo starts fresh. Only runs with an explicit --reset flag. */
+async function resetAll() {
+  await prisma.$transaction([
+    prisma.booking.deleteMany(),
+    prisma.block.deleteMany(),
+    prisma.court.deleteMany(),
+    prisma.priceRule.deleteMany(),
+    prisma.openingHours.deleteMany(),
+    prisma.adminUser.deleteMany(),
+  ]);
+  console.log('- Reset: all data deleted');
+}
+
 async function main() {
   console.log('Seeding database...');
+  if (process.argv.includes('--reset')) await resetAll();
   await ensureVenueDefaults(prisma);
   console.log('- Opening hours and prices: ensured');
   await seedCourts();

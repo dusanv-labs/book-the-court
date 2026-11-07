@@ -161,7 +161,8 @@ export function BookingDialog({
             {booking.isPending ? 'Booking…' : quote.data ? `Confirm booking · ${formatPrice(quote.data.price, quote.data.currency)}` : 'Confirm booking'}
           </Button>
           <p className="text-center text-xs text-slate-500">
-            Demo app: no payment is taken and no email is sent.
+            Demo app: no payment is taken and no email is sent. Please don't enter real personal data — the demo resets every
+            night.
           </p>
         </form>
       </div>
