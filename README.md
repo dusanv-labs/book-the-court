@@ -2,7 +2,21 @@
 
 A sports court booking system: players see free courts by the hour and book them online, and the venue owner manages courts, opening hours, pricing and bookings from an admin panel.
 
-> **Status:** API and web app complete; the live demo link will be added here after deployment.
+## Live demo
+
+- **App:** https://dusanv-labs.github.io/book-the-court/
+- **API docs (Swagger):** https://book-the-court-api.onrender.com/api/docs
+- **Admin panel:** open *Admin* in the app and log in with `demo@example.com` / `court-demo-2026`
+
+The demo database is reset every night, so feel free to book, cancel and change anything. The API runs on a free plan that sleeps when idle, so the first request can take up to a minute.
+
+## Deployment
+
+| Part | Where | How |
+|---|---|---|
+| Web app | GitHub Pages | `.github/workflows/deploy-web.yml` builds and deploys on every push to `main` |
+| API | Render (free plan) | `render.yaml` Blueprint; deploys after CI passes |
+| Database | Neon PostgreSQL | migrations and demo data applied by `.github/workflows/reset-demo.yml` (nightly) |
 
 ## Features
 
