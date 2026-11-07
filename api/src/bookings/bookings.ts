@@ -20,14 +20,18 @@ import { z } from 'zod';
 import { AdminGuard, AuthModule } from '../auth/auth.js';
 import { APP_CONFIG, type AppConfig } from '../config/config.js';
 import { dateSchema, idSchema, sportSchema } from '../common/schemas.js';
-import { addMinutes, dayOfWeekOf, localToUtc } from '../common/time.js';
+import { addMinutes, dayOfWeekOf, localToUtc, toLocalParts } from '../common/time.js';
 import { isOverlapViolation, isUniqueViolation, PrismaService } from '../prisma/prisma.service.js';
 import { generateBookingCode, generateCancelToken } from './domain/codes.js';
 import { MissingPriceRuleError, quotePrice } from './domain/pricing.js';
 import {
   ALLOWED_DURATIONS,
   checkBookingRequest,
+  countBookableStarts,
   courtDaySlots,
+  dayStatus,
+  type DayStatus,
+  MAX_DAYS_AHEAD,
   type DayHours,
   type Interval,
   REJECTION_MESSAGES,
@@ -45,6 +49,14 @@ const durationSchema = z.coerce
 const startsAtSchema = z.iso.datetime({ offset: true }).transform((s) => new Date(s));
 
 const availabilityQuerySchema = z.object({ date: dateSchema, sport: sportSchema });
+const MAX_SUMMARY_DAYS = 62;
+const daysQuerySchema = z
+  .object({ sport: sportSchema, from: dateSchema, to: dateSchema })
+  .refine((q) => q.from <= q.to, 'from must not be after to')
+  .refine(
+    (q) => (Date.parse(`${q.to}T00:00:00Z`) - Date.parse(`${q.from}T00:00:00Z`)) / 86_400_000 < MAX_SUMMARY_DAYS,
+    `At most ${MAX_SUMMARY_DAYS} days per request`,
+  );
 const quoteQuerySchema = z.object({ courtId: idSchema, startsAt: startsAtSchema, durationMinutes: durationSchema });
 const createBookingSchema = z.object({
   courtId: idSchema,
@@ -77,6 +89,59 @@ export class BookingsService {
     const rows = await this.prisma.openingHours.findMany();
     const byDay = new Map(rows.map((r) => [r.dayOfWeek, r]));
     return (dow) => byDay.get(dow) ?? null;
+  }
+
+  /** Per-day status for a calendar: available / limited / full / closed / past / unavailable. */
+  async daysSummary(sport: z.infer<typeof sportSchema>, from: string, to: string) {
+    const hoursFor = await this.hoursMap();
+    const rangeStart = localToUtc(from, 0, this.tz);
+    const rangeEnd = localToUtc(to, 24 * 60, this.tz);
+    const courts = await this.prisma.court.findMany({ where: { active: true, sport }, select: { id: true } });
+    const courtIds = courts.map((c) => c.id);
+    const [bookings, blocks] = await Promise.all([
+      this.prisma.booking.findMany({
+        where: { status: 'CONFIRMED', courtId: { in: courtIds }, startsAt: { lt: rangeEnd }, endsAt: { gt: rangeStart } },
+        select: { courtId: true, startsAt: true, endsAt: true },
+      }),
+      this.prisma.block.findMany({
+        where: { OR: [{ courtId: { in: courtIds } }, { courtId: null }], startsAt: { lt: rangeEnd }, endsAt: { gt: rangeStart } },
+        select: { courtId: true, startsAt: true, endsAt: true },
+      }),
+    ]);
+    const now = new Date();
+    const lastBookable = toLocalParts(addMinutes(now, MAX_DAYS_AHEAD * 24 * 60), this.tz).date;
+
+    const days: { date: string; status: DayStatus; freeStarts: number }[] = [];
+    for (let d = new Date(`${from}T12:00:00Z`); d.toISOString().slice(0, 10) <= to; d.setUTCDate(d.getUTCDate() + 1)) {
+      const date = d.toISOString().slice(0, 10);
+      if (date > lastBookable) {
+        days.push({ date, status: 'unavailable', freeStarts: 0 });
+        continue;
+      }
+      const hours = hoursFor(dayOfWeekOf(date, this.tz));
+      const open = !!hours && !hours.closed && courtIds.length > 0;
+      let freeStarts = 0;
+      let remainingStarts = 0;
+      if (open) {
+        const dayStart = localToUtc(date, 0, this.tz);
+        const dayEnd = localToUtc(date, 24 * 60, this.tz);
+        const inDay = (i: Interval) => i.startsAt < dayEnd && i.endsAt > dayStart;
+        for (const courtId of courtIds) {
+          const slots = courtDaySlots({
+            date,
+            hours,
+            bookings: bookings.filter((b) => b.courtId === courtId && inDay(b)),
+            blocks: blocks.filter((b) => (b.courtId === null || b.courtId === courtId) && inDay(b)),
+            now,
+            tz: this.tz,
+          });
+          freeStarts += countBookableStarts(slots);
+          remainingStarts += countBookableStarts(slots.map((s) => ({ ...s, status: s.status === 'past' ? 'past' : 'free' })));
+        }
+      }
+      days.push({ date, status: dayStatus({ open, freeStarts, remainingStarts }), freeStarts });
+    }
+    return { sport, from, to, maxDaysAhead: MAX_DAYS_AHEAD, days };
   }
 
   async availability(date: string, sport: z.infer<typeof sportSchema>) {
@@ -285,6 +350,12 @@ export class BookingsService {
 @Controller()
 export class BookingsController {
   constructor(private readonly bookings: BookingsService) {}
+
+  @Get('availability/days')
+  @ApiOperation({ summary: 'Day-by-day status for a calendar (available, limited, full, closed, past, unavailable).' })
+  days(@Query({ schema: daysQuerySchema }) q: z.infer<typeof daysQuerySchema>) {
+    return this.bookings.daysSummary(q.sport, q.from, q.to);
+  }
 
   @Get('availability')
   @ApiOperation({ summary: 'Courts × 30-minute slots for one sport and day, with free/booked/blocked/past status.' })

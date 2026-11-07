@@ -16,6 +16,7 @@ export function BookingDialog({
   court,
   slotIndex,
   rememberable,
+  initialDuration,
   onClose,
   onBooked,
   onConflict,
@@ -23,6 +24,8 @@ export function BookingDialog({
   data: Availability;
   court: AvailabilityCourt;
   slotIndex: number;
+  /** Duration chosen before opening the dialog (can still be changed here). */
+  initialDuration?: number;
   /** Offer "remember my details" (public booking only, not for admins entering customer data). */
   rememberable: boolean;
   onClose: () => void;
@@ -31,7 +34,9 @@ export function BookingDialog({
 }) {
   const { m } = useI18n();
   const options = possibleDurations(court.slots, slotIndex, data.durations, data.slotMinutes);
-  const [duration, setDuration] = useState(options[0] ?? data.durations[0]);
+  const [duration, setDuration] = useState(
+    initialDuration && options.includes(initialDuration) ? initialDuration : (options[0] ?? data.durations[0]),
+  );
   const startsAt = court.slots[slotIndex].startsAt;
   const dialogRef = useRef<HTMLDivElement>(null);
   const saved = rememberable ? loadCustomer() : null;

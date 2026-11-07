@@ -3,32 +3,17 @@ import { useState, type ReactNode } from 'react';
 import { useI18n } from '../i18n/context';
 import { api, errorText } from '../lib/api';
 import { lowestHourly } from '../lib/pricing';
-import { addDays, formatDateLong, formatPrice, formatTime, minuteLabel, possibleDurations, todayIn, VENUE_TZ } from '../lib/time';
-import { SPORTS, type Availability, type AvailabilityCourt, type BookingResult, type Sport } from '../lib/types';
+import { addDays, formatDateLong, formatPrice, minuteLabel, monthRange, todayIn, VENUE_TZ } from '../lib/time';
+import { SPORTS, type AvailabilityCourt, type BookingResult, type DayStatus, type Sport } from '../lib/types';
 import { BookingDialog } from './BookingDialog';
-import { DateStrip } from './DateStrip';
+import { MonthCalendar } from './MonthCalendar';
 import { PriceList } from './PriceList';
+import { startOptions } from '../lib/start-options';
+import { TimePicker } from './TimePicker';
 import { Button, Card, ErrorMessage, SlowNotice, Spinner } from './ui';
 
-type Part = 'all' | 'morning' | 'afternoon' | 'evening';
-
-const partOf = (time: string): Exclude<Part, 'all'> => {
-  const hour = Number(time.slice(0, 2));
-  return hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
-};
-
-interface StartTime {
-  index: number;
-  time: string;
-}
-
-/** Bookable start times: free slots with room for at least the shortest duration. */
-function startTimes(court: AvailabilityCourt, data: Availability): StartTime[] {
-  const shortest = Math.min(...data.durations);
-  return court.slots
-    .map((slot, index) => ({ index, time: formatTime(slot.startsAt, data.timezone) }))
-    .filter(({ index }) => possibleDurations(court.slots, index, [shortest], data.slotMinutes).length > 0);
-}
+const MAX_DAYS_AHEAD = 60; // mirrors the API rule; the API also enforces it
+const DURATIONS = [60, 90, 120];
 
 function StepTitle({ n, children }: { n: number; children: ReactNode }) {
   return (
@@ -39,15 +24,29 @@ function StepTitle({ n, children }: { n: number; children: ReactNode }) {
   );
 }
 
-/** Sport → day → start time → booking dialog. Used by the public booking page and the admin "new booking" page. */
+/** Sport → day (calendar) → duration and start time → court → booking dialog. */
 export function SlotBrowser({ onBooked, rememberCustomer }: { onBooked: (result: BookingResult) => void; rememberCustomer: boolean }) {
   const { m } = useI18n();
   const today = todayIn(VENUE_TZ);
+  const lastDay = addDays(today, MAX_DAYS_AHEAD);
   const [sport, setSport] = useState<Sport>('PADEL');
   const [date, setDate] = useState(today);
-  const [part, setPart] = useState<Part>('all');
+  const [month, setMonth] = useState(today.slice(0, 7));
+  const [duration, setDuration] = useState(90);
   const [selection, setSelection] = useState<{ court: AvailabilityCourt; slotIndex: number } | null>(null);
   const [conflict, setConflict] = useState(false);
+
+  // Calendar colours for the visible month (only the bookable part of it).
+  const range = monthRange(month);
+  const from = range.from < today ? today : range.from;
+  const to = range.to > lastDay ? lastDay : range.to;
+  const days = useQuery({
+    queryKey: ['days', sport, from, to],
+    queryFn: () => api.days(sport, from, to),
+    enabled: from <= to,
+  });
+  const statuses: Record<string, DayStatus> = Object.fromEntries((days.data?.days ?? []).map((d) => [d.date, d.status]));
+  const nextAvailable = days.data?.days.find((d) => d.date > date && (d.status === 'available' || d.status === 'limited'))?.date;
 
   const availability = useQuery({
     queryKey: ['availability', date, sport],
@@ -55,21 +54,14 @@ export function SlotBrowser({ onBooked, rememberCustomer }: { onBooked: (result:
     refetchInterval: 60_000,
   });
   const data = availability.data;
-
-  const courts = (data?.courts ?? []).map((court) => {
-    const all = data ? startTimes(court, data) : [];
-    return { court, all, shown: part === 'all' ? all : all.filter((s) => partOf(s.time) === part) };
-  });
-  const totalFree = courts.reduce((n, c) => n + c.all.length, 0);
-  const shownFree = courts.reduce((n, c) => n + c.shown.length, 0);
+  const options = data ? startOptions(data, duration) : [];
   const minPrice = data ? lowestHourly(data.prices) : null;
 
-  const parts: [Part, string][] = [
-    ['all', m.booking.partAll],
-    ['morning', m.booking.partMorning],
-    ['afternoon', m.booking.partAfternoon],
-    ['evening', m.booking.partEvening],
-  ];
+  const pickDate = (d: string) => {
+    setDate(d);
+    setMonth(d.slice(0, 7));
+    setConflict(false);
+  };
 
   return (
     <div className="space-y-8">
@@ -93,15 +85,24 @@ export function SlotBrowser({ onBooked, rememberCustomer }: { onBooked: (result:
         </div>
       </section>
 
-      <section>
-        <StepTitle n={2}>{m.booking.stepDay}</StepTitle>
-        <DateStrip start={today} value={date} onChange={setDate} />
-      </section>
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,22rem)_1fr] lg:items-start">
+        <section>
+          <StepTitle n={2}>{m.booking.stepDay}</StepTitle>
+          <MonthCalendar
+            month={month}
+            onMonthChange={setMonth}
+            minMonth={today.slice(0, 7)}
+            maxMonth={lastDay.slice(0, 7)}
+            statuses={statuses}
+            value={date}
+            onChange={pickDate}
+            loading={days.isFetching}
+          />
+        </section>
 
-      <section aria-live="polite">
-        <StepTitle n={3}>{m.booking.stepTime}</StepTitle>
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-          <div>
+        <section aria-live="polite">
+          <StepTitle n={3}>{m.booking.chooseTime}</StepTitle>
+          <div className="mb-4">
             <p className="text-lg font-semibold first-letter:uppercase">{formatDateLong(date, m.locale)}</p>
             {data?.hours && (
               <p className="text-sm text-slate-500">
@@ -110,84 +111,60 @@ export function SlotBrowser({ onBooked, rememberCustomer }: { onBooked: (result:
               </p>
             )}
           </div>
-          {data?.hours && totalFree > 0 && (
-            <div className="flex rounded-xl border border-slate-200 bg-white p-1" role="radiogroup" aria-label={m.booking.stepTime}>
-              {parts.map(([value, label]) => (
+
+          <div className="mb-5">
+            <p className="mb-2 text-sm font-medium text-slate-700">{m.booking.stepDuration}</p>
+            <div className="grid max-w-sm grid-cols-3 gap-2" role="radiogroup" aria-label={m.booking.stepDuration}>
+              {DURATIONS.map((d) => (
                 <button
-                  key={value}
+                  key={d}
                   type="button"
                   role="radio"
-                  aria-checked={part === value}
-                  onClick={() => setPart(value)}
-                  className={`rounded-lg px-3 py-1.5 text-sm font-medium ${part === value ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                  aria-checked={duration === d}
+                  onClick={() => setDuration(d)}
+                  className={`rounded-xl border py-2.5 text-sm font-bold transition-colors ${
+                    duration === d ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 bg-white text-slate-700 hover:border-emerald-500'
+                  }`}
                 >
-                  {label}
+                  {d} {m.common.min}
                 </button>
               ))}
             </div>
-          )}
-        </div>
-
-        {conflict && <div className="mb-4"><ErrorMessage>{m.errors.conflict}</ErrorMessage></div>}
-
-        {availability.isLoading && (
-          <Card>
-            <Spinner label={m.common.loading} />
-            <SlowNotice />
-          </Card>
-        )}
-        {availability.isError && <ErrorMessage>{errorText(availability.error, m.errors)}</ErrorMessage>}
-        {data && !data.hours && <Card>{m.booking.closed}</Card>}
-        {data && data.hours && data.courts.length === 0 && <Card>{m.booking.noCourts}</Card>}
-
-        {data && data.hours && data.courts.length > 0 && totalFree === 0 && (
-          <Card className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p>{m.booking.noneToday}</p>
-            <Button onClick={() => setDate(addDays(date, 1))}>{m.booking.tryNextDay} →</Button>
-          </Card>
-        )}
-        {data && totalFree > 0 && shownFree === 0 && <Card>{m.booking.noneInPart}</Card>}
-
-        {data && totalFree > 0 && shownFree > 0 && (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {courts.map(({ court, all, shown }) => (
-              <Card key={court.id} className="flex flex-col">
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <div>
-                    <h3 className="font-semibold text-slate-900">{court.name}</h3>
-                    <p className="text-xs text-slate-500">{court.indoor ? m.common.indoor : m.common.outdoor}</p>
-                  </div>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-xs font-semibold ${all.length ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}
-                  >
-                    {all.length ? m.booking.freeCount(all.length) : m.booking.fullyBooked}
-                  </span>
-                </div>
-                {shown.length > 0 ? (
-                  <div className="grid grid-cols-4 gap-2 sm:grid-cols-5 md:grid-cols-4">
-                    {shown.map(({ index, time }) => (
-                      <button
-                        key={index}
-                        type="button"
-                        onClick={() => {
-                          setConflict(false);
-                          setSelection({ court, slotIndex: index });
-                        }}
-                        aria-label={m.booking.bookAt(court.name, time)}
-                        className="rounded-lg border border-emerald-200 bg-emerald-50 py-2 text-sm font-semibold text-emerald-800 transition-colors hover:border-emerald-600 hover:bg-emerald-600 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
-                      >
-                        {time}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-slate-500">{all.length ? m.booking.noneInPart : m.booking.fullyBooked}</p>
-                )}
-              </Card>
-            ))}
           </div>
-        )}
-      </section>
+
+          {conflict && (
+            <div className="mb-4">
+              <ErrorMessage>{m.errors.conflict}</ErrorMessage>
+            </div>
+          )}
+          {availability.isLoading && (
+            <Card>
+              <Spinner label={m.common.loading} />
+              <SlowNotice />
+            </Card>
+          )}
+          {availability.isError && <ErrorMessage>{errorText(availability.error, m.errors)}</ErrorMessage>}
+          {data && !data.hours && <Card>{m.booking.closed}</Card>}
+          {data && data.hours && data.courts.length === 0 && <Card>{m.booking.noCourts}</Card>}
+          {data && data.hours && data.courts.length > 0 && options.length === 0 && (
+            <Card className="space-y-3">
+              <p>{m.booking.noTimesForDuration}</p>
+              {nextAvailable && <Button onClick={() => pickDate(nextAvailable)}>{m.booking.nextAvailable} →</Button>}
+            </Card>
+          )}
+          {data && options.length > 0 && (
+            <TimePicker
+              key={`${date}-${sport}-${duration}`}
+              data={data}
+              duration={duration}
+              onBook={(court, slotIndex) => {
+                setConflict(false);
+                setSelection({ court, slotIndex });
+              }}
+            />
+          )}
+        </section>
+      </div>
 
       {data && data.prices.length > 0 && (
         <Card>
@@ -203,6 +180,7 @@ export function SlotBrowser({ onBooked, rememberCustomer }: { onBooked: (result:
           data={data}
           court={selection.court}
           slotIndex={selection.slotIndex}
+          initialDuration={duration}
           rememberable={rememberCustomer}
           onClose={() => setSelection(null)}
           onBooked={onBooked}
@@ -210,6 +188,7 @@ export function SlotBrowser({ onBooked, rememberCustomer }: { onBooked: (result:
             setSelection(null);
             setConflict(true);
             void availability.refetch();
+            void days.refetch();
           }}
         />
       )}

@@ -101,6 +101,34 @@ export function checkBookingRequest(params: {
   return { ok: true, endsAt };
 }
 
+/** Number of start times where a booking of `minDuration` fits into consecutive free slots. */
+export function countBookableStarts(slots: Slot[], minDuration: number = ALLOWED_DURATIONS[0]): number {
+  const needed = minDuration / SLOT_MINUTES;
+  let count = 0;
+  let run = 0;
+  for (let i = 0; i < slots.length; i++) {
+    const contiguous = i > 0 && slots[i].startsAt.getTime() === slots[i - 1].endsAt.getTime();
+    run = slots[i].status === 'free' ? (contiguous ? run + 1 : 1) : 0;
+    if (run >= needed) count++;
+  }
+  return count;
+}
+
+export type DayStatus = 'available' | 'limited' | 'full' | 'closed' | 'past' | 'unavailable';
+
+/**
+ * Summary status of one day for a calendar.
+ * remainingStarts = start times not yet in the past (booked or not); freeStarts = of those, still bookable.
+ * full = open but nothing left to book; limited = less than a quarter left.
+ */
+export function dayStatus(params: { open: boolean; freeStarts: number; remainingStarts: number }): DayStatus {
+  if (!params.open) return 'closed';
+  if (params.remainingStarts === 0) return 'past';
+  if (params.freeStarts === 0) return 'full';
+  if (params.freeStarts / params.remainingStarts < 0.25) return 'limited';
+  return 'available';
+}
+
 export const REJECTION_MESSAGES: Record<BookingRejection, string> = {
   INVALID_DURATION: `Duration must be ${ALLOWED_DURATIONS.join(', ')} minutes.`,
   NOT_ALIGNED: 'Bookings must start on the hour or half hour.',

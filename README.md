@@ -21,8 +21,8 @@ The demo database is reset every night, so feel free to book, cancel and change 
 ## Features
 
 **Players**
-- Three simple steps: sport → day → start time, with free start times shown as large buttons per court
-- Filter by morning, afternoon or evening; a "next day" shortcut when a day is full
+- Simple steps: sport → day in a month calendar (fully booked days in red) → duration → start time → court
+- Start times grouped by morning, afternoon and evening, each showing how many courts are free and the price; a shortcut to the next available day
 - Choose 60, 90 or 120 minutes with the price of each option shown upfront
 - Booking code, private manage/cancel link and **Add to calendar** (.ics)
 - Optional "remember my details" for faster repeat bookings

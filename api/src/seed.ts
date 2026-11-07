@@ -90,6 +90,19 @@ async function seedDemoBookings() {
     created++;
   }
   console.log(`- Demo bookings: created ${created}`);
+
+  // One fully booked padel day, so the calendar shows what a full day looks like.
+  const tournamentDay = dayPlus(12);
+  const padelCourts = courts.filter((c) => c.sport === 'PADEL');
+  await prisma.block.createMany({
+    data: padelCourts.map((c) => ({
+      courtId: c.id,
+      startsAt: localToUtc(tournamentDay, 0, tz),
+      endsAt: localToUtc(tournamentDay, 24 * 60, tz),
+      reason: 'Club tournament',
+    })),
+  });
+  console.log(`- Demo block: padel tournament on ${tournamentDay}`);
 }
 
 /** Deletes all data so the demo starts fresh. Only runs with an explicit --reset flag. */

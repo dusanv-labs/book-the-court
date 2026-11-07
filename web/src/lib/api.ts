@@ -1,6 +1,7 @@
 import type {
   AdminBooking,
   Availability,
+  DaysSummary,
   Block,
   BookingResult,
   Court,
@@ -66,6 +67,7 @@ const q = (params: Record<string, string | number>) =>
 
 export const api = {
   availability: (date: string, sport: Sport) => request<Availability>(`/availability${q({ date, sport })}`),
+  days: (sport: Sport, from: string, to: string) => request<DaysSummary>(`/availability/days${q({ sport, from, to })}`),
   quote: (courtId: string, startsAt: string, durationMinutes: number) =>
     request<Quote>(`/bookings/quote${q({ courtId, startsAt, durationMinutes })}`),
   createBooking: (body: {

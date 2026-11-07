@@ -114,6 +114,17 @@ describe('booking flow', () => {
   });
 });
 
+describe('calendar summary', () => {
+  it('returns one status per day and marks a fully booked day as full', async () => {
+    const server = app.getHttpServer();
+    const res = await request(server).get(`/api/availability/days?sport=PADEL&from=${DATE}&to=${DATE}`).expect(200);
+    expect(res.body.days).toHaveLength(1);
+    expect(['available', 'limited', 'full']).toContain(res.body.days[0].status);
+
+    await request(server).get(`/api/availability/days?sport=PADEL&from=${DATE}&to=2099-01-01`).expect(400);
+  });
+});
+
 describe('double booking protection', () => {
   it('accepts exactly one of many simultaneous requests for the same slot', async () => {
     const server = app.getHttpServer();

@@ -31,6 +31,16 @@ export interface PriceBand {
   pricePerHour: number;
 }
 
+export type DayStatus = 'available' | 'limited' | 'full' | 'closed' | 'past' | 'unavailable';
+
+export interface DaysSummary {
+  sport: Sport;
+  from: string;
+  to: string;
+  maxDaysAhead: number;
+  days: { date: string; status: DayStatus; freeStarts: number }[];
+}
+
 export interface Availability {
   date: string;
   sport: Sport;

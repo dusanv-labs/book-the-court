@@ -81,3 +81,18 @@ export function halfHourOptions(from = 0, to = 24 * 60): number[] {
   for (let m = from; m <= to; m += 30) out.push(m);
   return out;
 }
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** First and last date (YYYY-MM-DD) of a YYYY-MM month. */
+export function monthRange(month: string): { from: string; to: string } {
+  const [y, m] = month.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { from: `${month}-01`, to: `${month}-${pad2(last)}` };
+}
+
+export function addMonths(month: string, delta: number): string {
+  const [y, m] = month.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}`;
+}

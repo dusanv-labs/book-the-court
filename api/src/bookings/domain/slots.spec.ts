@@ -1,4 +1,4 @@
-import { buildDaySlots, checkBookingRequest, courtDaySlots, type DayHours } from './slots.js';
+import { buildDaySlots, checkBookingRequest, countBookableStarts, courtDaySlots, dayStatus, type DayHours } from './slots.js';
 
 const TZ = 'Europe/Belgrade';
 const HOURS: DayHours = { openMinute: 8 * 60, closeMinute: 23 * 60, closed: false }; // 08:00-23:00
@@ -43,6 +43,28 @@ describe('courtDaySlots', () => {
     expect(statusAt('2026-11-09T11:30:00.000Z')).toBe('free');
     expect(statusAt('2026-11-09T17:30:00.000Z')).toBe('blocked');
     expect(statusAt('2026-11-09T18:00:00.000Z')).toBe('free');
+  });
+});
+
+describe('countBookableStarts and dayStatus', () => {
+  const day = (statuses: string) =>
+    courtDaySlots({ date: '2026-11-09', hours: { openMinute: 600, closeMinute: 600 + statuses.length * 30, closed: false }, bookings: [], blocks: [], now: iso('2026-11-01T00:00:00Z'), tz: TZ }).map(
+      (s, i) => ({ ...s, status: ({ f: 'free', b: 'booked', x: 'blocked', p: 'past' } as const)[statuses[i] as 'f' | 'b' | 'x' | 'p'] }),
+    );
+
+  it('counts start times with room for at least 60 minutes', () => {
+    expect(countBookableStarts(day('ffff'))).toBe(3);
+    expect(countBookableStarts(day('ffbff'))).toBe(2);
+    expect(countBookableStarts(day('fbfbf'))).toBe(0);
+    expect(countBookableStarts(day('ffff'), 120)).toBe(1);
+  });
+
+  it('classifies days for the calendar', () => {
+    expect(dayStatus({ open: false, freeStarts: 0, remainingStarts: 0 })).toBe('closed');
+    expect(dayStatus({ open: true, freeStarts: 0, remainingStarts: 0 })).toBe('past');
+    expect(dayStatus({ open: true, freeStarts: 0, remainingStarts: 20 })).toBe('full');
+    expect(dayStatus({ open: true, freeStarts: 4, remainingStarts: 20 })).toBe('limited');
+    expect(dayStatus({ open: true, freeStarts: 15, remainingStarts: 20 })).toBe('available');
   });
 });
 
