@@ -28,8 +28,10 @@ jobs:
           node-version: lts/*
           cache: npm
       - run: npm ci
+      # Prisma prints the database host; this repo's logs are public, so that line is removed.
       - name: Apply database migrations
-        run: npm run db:migrate -w api
+        shell: bash
+        run: npm run db:migrate -w api 2>&1 | sed '/^Datasource /d'
       - run: npm run build -w api
       - name: Reset and seed demo data
         run: npm run db:seed -w api -- --reset --demo

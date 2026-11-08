@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
@@ -168,6 +169,18 @@ describe('admin', () => {
   it('rejects requests without a valid token', async () => {
     await request(app.getHttpServer()).get('/api/admin/courts').expect(401);
     await request(app.getHttpServer()).get('/api/admin/courts').set('Authorization', 'Bearer invalid').expect(401);
+  });
+
+  it('only accepts HS256 tokens (no "none" algorithm, no other algorithm even with the right secret)', async () => {
+    const server = app.getHttpServer();
+    const payload = { sub: 'e2e', email: ADMIN_EMAIL, role: 'admin' };
+    const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const unsigned = `${b64({ alg: 'none', typ: 'JWT' })}.${b64({ ...payload, exp: 4_102_444_800 })}.`;
+    await request(server).get('/api/admin/courts').set('Authorization', `Bearer ${unsigned}`).expect(401);
+    const hs512 = await app.get(JwtService).signAsync(payload, { algorithm: 'HS512' });
+    await request(server).get('/api/admin/courts').set('Authorization', `Bearer ${hs512}`).expect(401);
+    const hs256 = await app.get(JwtService).signAsync(payload);
+    await request(server).get('/api/admin/courts').set('Authorization', `Bearer ${hs256}`).expect(200);
   });
 
   it('logs in and lists the day bookings with customer details', async () => {

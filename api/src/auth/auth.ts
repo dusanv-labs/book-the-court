@@ -89,7 +89,9 @@ export class AuthController {
       inject: [APP_CONFIG],
       useFactory: (config: AppConfig) => ({
         secret: config.JWT_SECRET,
-        signOptions: { expiresIn: config.JWT_EXPIRES_IN_SECONDS },
+        // Only HS256 is accepted, so a token can never choose its own algorithm (e.g. "none").
+        signOptions: { algorithm: 'HS256', expiresIn: config.JWT_EXPIRES_IN_SECONDS },
+        verifyOptions: { algorithms: ['HS256'] },
       }),
     }),
   ],
