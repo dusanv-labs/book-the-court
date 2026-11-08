@@ -61,8 +61,9 @@ export function formatPct(value: number | null, locale: string, signed = false):
   return `${sign}${text}%`;
 }
 
-export function formatAmount(value: number, locale: string): string {
-  return new Intl.NumberFormat(locale === 'en-GB' ? 'en-GB' : 'sr-Latn-RS').format(value);
+/** RSD amounts use the local format (4.800) in both languages, like the rest of the app. */
+export function formatAmount(value: number, _locale?: string): string {
+  return new Intl.NumberFormat('sr-Latn-RS').format(value);
 }
 
 /** One table (header + rows + total) used by the page, the XLSX file and the PDF. */
