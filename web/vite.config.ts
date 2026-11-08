@@ -7,4 +7,6 @@ export default defineConfig({
   // GitHub Pages serves the app from /book-the-court/; locally it runs from /.
   base: process.env.VITE_BASE ?? '/',
   plugins: [react(), tailwindcss()],
+  // pdfmake and its fonts are large but load only when a PDF is exported.
+  build: { chunkSizeWarningLimit: 900 },
 })

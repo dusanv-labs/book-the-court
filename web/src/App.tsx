@@ -1,16 +1,28 @@
+import { lazy, Suspense, type ReactNode } from 'react';
 import { Link, Route, Routes } from 'react-router';
 import { Layout } from './components/Layout';
+import { Spinner } from './components/ui';
 import { useI18n } from './i18n/context';
-import { AdminLayout } from './pages/admin/AdminLayout';
-import { BlocksAdminPage } from './pages/admin/BlocksAdminPage';
-import { BookingsAdminPage } from './pages/admin/BookingsAdminPage';
-import { CourtsAdminPage } from './pages/admin/CourtsAdminPage';
-import { LoginPage } from './pages/admin/LoginPage';
-import { NewBookingAdminPage } from './pages/admin/NewBookingAdminPage';
-import { ScheduleAdminPage } from './pages/admin/ScheduleAdminPage';
 import { BookingPage } from './pages/BookingPage';
 import { ConfirmationPage } from './pages/ConfirmationPage';
 import { ManagePage } from './pages/ManagePage';
+
+// Admin pages are loaded only when an admin opens them, so players download less.
+const named = <K extends string>(load: () => Promise<Record<K, React.ComponentType>>, name: K) =>
+  lazy(() => load().then((mod) => ({ default: mod[name] })));
+const AdminLayout = named(() => import('./pages/admin/AdminLayout'), 'AdminLayout');
+const LoginPage = named(() => import('./pages/admin/LoginPage'), 'LoginPage');
+const BookingsAdminPage = named(() => import('./pages/admin/BookingsAdminPage'), 'BookingsAdminPage');
+const NewBookingAdminPage = named(() => import('./pages/admin/NewBookingAdminPage'), 'NewBookingAdminPage');
+const CourtsAdminPage = named(() => import('./pages/admin/CourtsAdminPage'), 'CourtsAdminPage');
+const ScheduleAdminPage = named(() => import('./pages/admin/ScheduleAdminPage'), 'ScheduleAdminPage');
+const BlocksAdminPage = named(() => import('./pages/admin/BlocksAdminPage'), 'BlocksAdminPage');
+const ReportsAdminPage = named(() => import('./pages/admin/ReportsAdminPage'), 'ReportsAdminPage');
+
+function Loading({ children }: { children: ReactNode }) {
+  const { m } = useI18n();
+  return <Suspense fallback={<Spinner label={m.common.loading} />}>{children}</Suspense>;
+}
 
 function NotFound() {
   const { m } = useI18n();
@@ -31,13 +43,14 @@ export default function App() {
         <Route index element={<BookingPage />} />
         <Route path="confirmed" element={<ConfirmationPage />} />
         <Route path="manage/:token" element={<ManagePage />} />
-        <Route path="admin/login" element={<LoginPage />} />
-        <Route path="admin" element={<AdminLayout />}>
-          <Route index element={<BookingsAdminPage />} />
-          <Route path="new" element={<NewBookingAdminPage />} />
-          <Route path="courts" element={<CourtsAdminPage />} />
-          <Route path="schedule" element={<ScheduleAdminPage />} />
-          <Route path="blocks" element={<BlocksAdminPage />} />
+        <Route path="admin/login" element={<Loading><LoginPage /></Loading>} />
+        <Route path="admin" element={<Loading><AdminLayout /></Loading>}>
+          <Route index element={<Loading><BookingsAdminPage /></Loading>} />
+          <Route path="new" element={<Loading><NewBookingAdminPage /></Loading>} />
+          <Route path="courts" element={<Loading><CourtsAdminPage /></Loading>} />
+          <Route path="schedule" element={<Loading><ScheduleAdminPage /></Loading>} />
+          <Route path="blocks" element={<Loading><BlocksAdminPage /></Loading>} />
+          <Route path="reports" element={<Loading><ReportsAdminPage /></Loading>} />
         </Route>
         <Route path="*" element={<NotFound />} />
       </Route>

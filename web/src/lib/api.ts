@@ -9,6 +9,8 @@ import type {
   OpeningHours,
   PriceRule,
   Quote,
+  ReportGroupBy,
+  RevenueReport,
   Sport,
 } from './types';
 
@@ -100,6 +102,11 @@ export const api = {
     createBlock: (body: { courtId: string | null; startsAt: string; endsAt: string; reason: string }) =>
       request<Block>('/admin/venue/blocks', { method: 'POST', body, token }),
     deleteBlock: (id: string) => request<void>(`/admin/venue/blocks/${id}`, { method: 'DELETE', token }),
+    revenue: (params: { from: string; to: string; groupBy: ReportGroupBy; sport?: Sport; courtId?: string }) =>
+      request<RevenueReport>(
+        `/admin/reports/revenue${q(Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined)) as Record<string, string>)}`,
+        { token },
+      ),
   }),
 };
 

@@ -34,6 +34,7 @@ The demo database is reset every night, so feel free to book, cancel and change 
 - Courts: rename, change sport or type, activate/deactivate
 - Opening hours (with "copy Monday to all weekdays") and price rules with warnings for gaps and overlaps
 - Block time on one or all courts, with a list of all upcoming blocks
+- **Revenue report**: realized (played) vs estimated (upcoming) revenue, cancellations and court occupancy; filter by period (with quick presets), sport and court; group by day, week, month, court or sport; comparison with the previous period; chart + table with totals; print, **XLSX** (with SUM formulas) and **PDF** export
 - Styled confirmation dialogs and toast notifications instead of browser pop-ups
 
 **Engineering highlights**

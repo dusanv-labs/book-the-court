@@ -7,6 +7,7 @@ import { ConfigModule } from './config/config.js';
 import { CourtsModule } from './courts/courts.js';
 import { HealthController } from './health.js';
 import { PrismaModule } from './prisma/prisma.service.js';
+import { ReportsModule } from './reports/reports.js';
 import { VenueModule } from './venue/venue.js';
 
 @Module({
@@ -23,6 +24,7 @@ import { VenueModule } from './venue/venue.js';
     CourtsModule,
     VenueModule,
     BookingsModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

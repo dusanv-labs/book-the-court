@@ -45,8 +45,8 @@ export function Layout() {
   const { m } = useI18n();
   return (
     <FeedbackProvider>
-      <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900">
-        <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur">
+      <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900 print:bg-white">
+        <header className="sticky top-0 z-30 border-b print:hidden border-slate-200 bg-white/90 backdrop-blur">
           <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-3 px-4">
             <Logo />
             <div className="flex items-center gap-2">
@@ -65,7 +65,7 @@ export function Layout() {
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
           <Outlet />
         </main>
-        <footer className="border-t border-slate-200 bg-white">
+        <footer className="border-t border-slate-200 bg-white print:hidden">
           <div className="mx-auto flex max-w-6xl flex-col gap-1 px-4 py-5 text-sm text-slate-500 sm:flex-row sm:justify-between">
             <p>{m.footer.demo}</p>
             <p>

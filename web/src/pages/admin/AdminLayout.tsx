@@ -15,17 +15,18 @@ export function AdminLayout() {
     { to: '/admin/courts', label: m.admin.tabs.courts },
     { to: '/admin/schedule', label: m.admin.tabs.schedule },
     { to: '/admin/blocks', label: m.admin.tabs.blocks },
+    { to: '/admin/reports', label: m.admin.tabs.reports },
   ];
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <h1 className="text-3xl font-bold tracking-tight">{m.admin.title}</h1>
         <Button variant="secondary" onClick={logout}>
           {m.admin.logout}
         </Button>
       </div>
-      <nav className="-mx-4 overflow-x-auto px-4" aria-label={m.admin.title}>
+      <nav className="-mx-4 overflow-x-auto px-4 print:hidden" aria-label={m.admin.title}>
         <div className="flex gap-1 border-b border-slate-200">
           {tabs.map((t) => (
             <NavLink

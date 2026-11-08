@@ -126,3 +126,35 @@ export interface Block {
   reason: string;
   court: { id: string; name: string } | null;
 }
+
+export type ReportGroupBy = 'day' | 'week' | 'month' | 'court' | 'sport';
+
+export interface RevenueFigures {
+  bookings: number;
+  realized: number;
+  estimated: number;
+  total: number;
+  cancelledCount: number;
+  cancelledAmount: number;
+  bookedMinutes: number;
+  availableMinutes: number;
+  occupancyPct: number | null;
+}
+
+export interface RevenueRow extends RevenueFigures {
+  key: string;
+  label: string;
+}
+
+export interface RevenueReport {
+  from: string;
+  to: string;
+  sport: Sport | null;
+  courtId: string | null;
+  groupBy: ReportGroupBy;
+  currency: string;
+  generatedAt: string;
+  totals: RevenueFigures;
+  rows: RevenueRow[];
+  previous: { from: string; to: string; total: number; bookings: number; occupancyPct: number | null; changePct: number | null };
+}

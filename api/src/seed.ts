@@ -105,6 +105,48 @@ async function seedDemoBookings() {
   console.log(`- Demo block: padel tournament on ${tournamentDay}`);
 }
 
+/** Played (and some cancelled) bookings for the last 60 days, so the revenue report has history. */
+async function seedPastBookings() {
+  const past = await prisma.booking.count({ where: { endsAt: { lt: new Date() } } });
+  if (past > 0) {
+    console.log('- Past bookings: already present, skipped');
+    return;
+  }
+  const courts = await prisma.court.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } });
+  const today = toLocalParts(new Date(), tz).date;
+  const data = [];
+  for (let daysAgo = 1; daysAgo <= 60; daysAgo++) {
+    const d = new Date(`${today}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - daysAgo);
+    const date = d.toISOString().slice(0, 10);
+    for (const [c, court] of courts.entries()) {
+      // Deterministic pattern: most courts get an evening game, some also a morning one.
+      const slots: [number, number][] = [];
+      if ((daysAgo + c) % 4 !== 0) slots.push([17 + ((daysAgo * (c + 1)) % 4), daysAgo % 2 === 0 ? 90 : 60]);
+      if ((daysAgo * (c + 2)) % 5 === 0) slots.push([10, 60]);
+      for (const [hour, duration] of slots) {
+        const startsAt = localToUtc(date, hour * 60, tz);
+        const cancelled = (daysAgo + c) % 9 === 0;
+        data.push({
+          code: generateBookingCode(),
+          cancelToken: generateCancelToken(),
+          courtId: court.id,
+          startsAt,
+          endsAt: addMinutes(startsAt, duration),
+          customerName: `Demo Player ${data.length + 100}`,
+          customerEmail: `history${data.length + 1}@example.com`,
+          customerPhone: '+381 60 000 0000',
+          price: quotePrice({ sport: court.sport, startsAt, durationMinutes: duration, rules: DEFAULT_PRICE_RULES, tz }),
+          status: cancelled ? ('CANCELLED' as const) : ('CONFIRMED' as const),
+          cancelledAt: cancelled ? addMinutes(startsAt, -24 * 60) : null,
+        });
+      }
+    }
+  }
+  await prisma.booking.createMany({ data });
+  console.log(`- Past bookings: created ${data.length}`);
+}
+
 /** Deletes all data so the demo starts fresh. Only runs with an explicit --reset flag. */
 async function resetAll() {
   await prisma.$transaction([
@@ -125,7 +167,10 @@ async function main() {
   console.log('- Opening hours and prices: ensured');
   await seedCourts();
   await seedAdmin();
-  if (process.argv.includes('--demo')) await seedDemoBookings();
+  if (process.argv.includes('--demo')) {
+    await seedDemoBookings();
+    await seedPastBookings();
+  }
   console.log('Done.');
 }
 

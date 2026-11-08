@@ -187,6 +187,21 @@ describe('admin', () => {
     expect(ours[0]).toHaveProperty('customerEmail');
   });
 
+  it('builds a revenue report filtered by court, with totals and a previous-period comparison', async () => {
+    const server = app.getHttpServer();
+    await request(server).get(`/api/admin/reports/revenue?from=${DATE}&to=${DATE}`).expect(401);
+    const login = await request(server).post('/api/auth/login').send({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
+    const res = await request(server)
+      .get(`/api/admin/reports/revenue?from=${DATE}&to=${DATE}&courtId=${courtId}&groupBy=court`)
+      .set('Authorization', `Bearer ${login.body.accessToken}`)
+      .expect(200);
+    expect(res.body.rows).toHaveLength(1);
+    expect(res.body.totals.bookings).toBeGreaterThan(0);
+    expect(res.body.totals.estimated).toBe(res.body.totals.total); // the test date is in the future
+    expect(res.body.totals.cancelledCount).toBeGreaterThan(0);
+    expect(res.body.previous).toHaveProperty('changePct');
+  });
+
   it('creates a block, lists it as upcoming, and removes it', async () => {
     const server = app.getHttpServer();
     const login = await request(server).post('/api/auth/login').send({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
