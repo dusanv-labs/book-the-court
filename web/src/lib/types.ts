@@ -158,3 +158,28 @@ export interface RevenueReport {
   rows: RevenueRow[];
   previous: { from: string; to: string; total: number; bookings: number; occupancyPct: number | null; changePct: number | null };
 }
+
+/** A bookable option suggested by the AI assistant (already checked by the API). */
+export interface AssistantSuggestion {
+  courtId: string;
+  courtName: string;
+  sport: Sport;
+  indoor: boolean;
+  date: string;
+  startTime: string;
+  endTime: string;
+  startsAt: string;
+  durationMinutes: number;
+  price: number;
+  currency: string;
+}
+
+export interface AssistantReply {
+  reply: string;
+  suggestions: AssistantSuggestion[];
+}
+
+export interface AssistantStatus {
+  enabled: boolean;
+  available: boolean;
+}

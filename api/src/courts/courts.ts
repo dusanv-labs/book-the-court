@@ -126,5 +126,6 @@ export class AdminCourtsController {
   imports: [AuthModule],
   controllers: [CourtsController, AdminCourtsController],
   providers: [CourtsService],
+  exports: [CourtsService],
 })
 export class CourtsModule {}

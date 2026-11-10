@@ -414,5 +414,6 @@ export class AdminBookingsController {
   imports: [AuthModule],
   controllers: [BookingsController, AdminBookingsController],
   providers: [BookingsService],
+  exports: [BookingsService],
 })
 export class BookingsModule {}

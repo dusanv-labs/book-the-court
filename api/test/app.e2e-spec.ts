@@ -1,9 +1,12 @@
 import 'dotenv/config';
+import type Anthropic from '@anthropic-ai/sdk';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
+import type { AssistantLlm } from '../src/assistant/agent.js';
+import { ASSISTANT_LLM } from '../src/assistant/assistant.js';
 import { hashPassword } from '../src/auth/password.js';
 import { localToUtc, toLocalParts } from '../src/common/time.js';
 import { isOverlapViolation, PrismaService } from '../src/prisma/prisma.service.js';
@@ -41,8 +44,37 @@ const bookingBody = (startsAt: string, durationMinutes = 60) => ({
   customerPhone: '+381 60 123 4567',
 });
 
+/** Scripted stand-in for the Claude API, so CI never calls (or pays for) the real model. */
+type LlmStep = (request: Anthropic.MessageCreateParamsNonStreaming) => Partial<Anthropic.Message>;
+const llmScript: LlmStep[] = [];
+const llmRequests: Anthropic.MessageCreateParamsNonStreaming[] = [];
+const fakeLlm: AssistantLlm = {
+  createMessage: async (params) => {
+    llmRequests.push(structuredClone(params));
+    const step = llmScript.shift();
+    if (!step) throw new Error('Unexpected call to the model');
+    return {
+      id: 'msg_e2e',
+      type: 'message',
+      role: 'assistant',
+      model: params.model,
+      stop_reason: 'end_turn',
+      content: [],
+      usage: { input_tokens: 2000, output_tokens: 200 },
+      ...step(params),
+    } as Anthropic.Message;
+  },
+};
+const lastToolResult = (req: Anthropic.MessageCreateParamsNonStreaming) => {
+  const content = req.messages.at(-1)!.content as Anthropic.ToolResultBlockParam[];
+  return JSON.parse(content[0].content as string);
+};
+
 beforeAll(async () => {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+    .overrideProvider(ASSISTANT_LLM)
+    .useValue(fakeLlm)
+    .compile();
   app = moduleRef.createNestApplication<NestExpressApplication>();
   setupApp(app);
   await app.init();
@@ -228,5 +260,106 @@ describe('admin', () => {
     expect(upcoming.body.map((b: { id: string }) => b.id)).toContain(created.body.id);
     await request(server).post('/api/bookings').send(bookingBody(at(8))).expect(409);
     await request(server).delete(`/api/admin/venue/blocks/${created.body.id}`).set(auth).expect(204);
+  });
+});
+
+describe('AI booking assistant (scripted model)', () => {
+  const today = () => toLocalParts(new Date(), TZ).date;
+
+  it('reports that it is switched on', async () => {
+    const res = await request(app.getHttpServer()).get('/api/assistant/status').expect(200);
+    expect(res.body).toEqual({ enabled: true, available: true });
+  });
+
+  it('finds free courts with the tools and shows only suggestions that pass the booking checks', async () => {
+    const server = app.getHttpServer();
+    await request(server).post('/api/bookings').send(bookingBody(at(20))).expect(201);
+    let freeStart = '';
+    llmScript.push(
+      () => ({
+        stop_reason: 'tool_use',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'call_1',
+            name: 'find_available_slots',
+            input: { sport: 'PADEL', date: DATE, durationMinutes: 60, earliestStart: '19:00' },
+          },
+        ],
+      }),
+      (req) => {
+        const ours = lastToolResult(req).options.filter((o: { courtId: string }) => o.courtId === courtId);
+        expect(ours.length).toBeGreaterThan(0);
+        expect(ours.map((o: { start: string }) => o.start)).not.toContain('20:00'); // booked above
+        freeStart = ours[0].start;
+        return {
+          stop_reason: 'tool_use',
+          content: [
+            {
+              type: 'tool_use',
+              id: 'call_2',
+              name: 'suggest_booking_options',
+              input: {
+                options: [
+                  { courtId, date: DATE, startTime: freeStart, durationMinutes: 60 },
+                  { courtId, date: DATE, startTime: '20:00', durationMinutes: 60 }, // taken: must be rejected
+                ],
+              },
+            },
+          ],
+        };
+      },
+      (req) => {
+        expect(lastToolResult(req)).toMatchObject({ shown: 1, rejected: [{ option: 2 }] });
+        return { content: [{ type: 'text', text: 'Here are the free courts.', citations: null }] };
+      },
+    );
+
+    const res = await request(server)
+      .post('/api/assistant/chat')
+      .send({ language: 'en', messages: [{ role: 'user', content: 'Padel this evening after 19:00?' }] })
+      .expect(200);
+    expect(res.body.reply).toBe('Here are the free courts.');
+    expect(res.body.suggestions).toEqual([
+      expect.objectContaining({ courtId, date: DATE, startTime: freeStart, durationMinutes: 60, currency: 'RSD' }),
+    ]);
+    expect(res.body.suggestions[0].price).toBeGreaterThan(0);
+    expect(llmScript).toHaveLength(0);
+
+    // Nothing the model saw contains customer data.
+    const seen = JSON.stringify(llmRequests);
+    expect(seen).not.toContain('e2e@example.com');
+    expect(seen).not.toContain('E2E Player');
+
+    const usage = await prisma.assistantUsage.findUniqueOrThrow({ where: { date: today() } });
+    expect(usage.requests).toBeGreaterThan(0);
+    expect(usage.inputTokens).toBeGreaterThanOrEqual(3 * 2000);
+    expect(usage.costMicroUsd).toBeGreaterThan(0);
+  });
+
+  it('validates the conversation', async () => {
+    const server = app.getHttpServer();
+    await request(server)
+      .post('/api/assistant/chat')
+      .send({ messages: [{ role: 'user', content: 'Hi' }, { role: 'assistant', content: 'Hello' }] })
+      .expect(400);
+    await request(server).post('/api/assistant/chat').send({ messages: [] }).expect(400);
+  });
+
+  it('stops answering when the daily budget is used up', async () => {
+    const server = app.getHttpServer();
+    const date = today();
+    const before = await prisma.assistantUsage.findUniqueOrThrow({ where: { date } });
+    await prisma.assistantUsage.update({ where: { date }, data: { costMicroUsd: 1_000_000_000 } });
+    try {
+      const res = await request(server)
+        .post('/api/assistant/chat')
+        .send({ messages: [{ role: 'user', content: 'Tennis tomorrow?' }] })
+        .expect(429);
+      expect(res.body.code).toBe('DAILY_LIMIT');
+      expect((await request(server).get('/api/assistant/status')).body).toEqual({ enabled: true, available: false });
+    } finally {
+      await prisma.assistantUsage.update({ where: { date }, data: { costMicroUsd: before.costMicroUsd } });
+    }
   });
 });

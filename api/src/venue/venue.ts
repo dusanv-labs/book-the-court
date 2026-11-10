@@ -212,5 +212,6 @@ export class AdminVenueController {
   imports: [AuthModule],
   controllers: [VenueController, AdminVenueController],
   providers: [VenueService],
+  exports: [VenueService],
 })
 export class VenueModule {}

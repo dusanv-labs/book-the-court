@@ -9,6 +9,18 @@ const configSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
   TIMEZONE: z.string().default(DEFAULT_TIMEZONE),
+  // AI booking assistant. Without an API key the assistant is switched off.
+  ANTHROPIC_API_KEY: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined),
+  ASSISTANT_MODEL: z.string().default('claude-haiku-5-5'),
+  /** Questions per day for the whole site, and the estimated spend per day in USD. */
+  ASSISTANT_DAILY_REQUESTS: z.coerce.number().int().min(0).default(20),
+  ASSISTANT_DAILY_BUDGET_USD: z.coerce.number().min(0).default(1),
+  /** Questions per day from one IP address. */
+  ASSISTANT_IP_DAILY_REQUESTS: z.coerce.number().int().min(0).default(10),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

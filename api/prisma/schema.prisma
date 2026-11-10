@@ -106,3 +106,15 @@ model Block {
   @@index([startsAt])
   @@map("blocks")
 }
+
+/// Daily usage of the AI booking assistant (local date), used to enforce the demo budget.
+model AssistantUsage {
+  date         String   @id // YYYY-MM-DD in the venue time zone
+  requests     Int      @default(0)
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  costMicroUsd Int      @default(0)
+  updatedAt    DateTime @updatedAt
+
+  @@map("assistant_usage")
+}

@@ -114,7 +114,20 @@ export function countBookableStarts(slots: Slot[], minDuration: number = ALLOWED
   return count;
 }
 
-export type DayStatus = 'available' | 'limited' | 'full' | 'closed' | 'past' | 'unavailable';
+/** Start times where a booking of `durationMinutes` fits into consecutive free slots. */
+export function bookableStarts(slots: Slot[], durationMinutes: number): Date[] {
+  const needed = durationMinutes / SLOT_MINUTES;
+  const starts: Date[] = [];
+  let run = 0;
+  for (let i = 0; i < slots.length; i++) {
+    const contiguous = i > 0 && slots[i].startsAt.getTime() === slots[i - 1].endsAt.getTime();
+    run = slots[i].status === 'free' ? (contiguous ? run + 1 : 1) : 0;
+    if (run >= needed) starts.push(slots[i - needed + 1].startsAt);
+  }
+  return starts;
+}
+
+export type DayStatus ='available' | 'limited' | 'full' | 'closed' | 'past' | 'unavailable';
 
 /**
  * Summary status of one day for a calendar.

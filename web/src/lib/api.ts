@@ -1,5 +1,7 @@
 import type {
   AdminBooking,
+  AssistantReply,
+  AssistantStatus,
   Availability,
   DaysSummary,
   Block,
@@ -19,11 +21,14 @@ export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost
 export class ApiError extends Error {
   readonly status: number;
   readonly messages: string[];
+  /** Machine-readable reason sent by some endpoints (e.g. the assistant's DAILY_LIMIT). */
+  readonly code?: string;
 
-  constructor(status: number, messages: string[]) {
+  constructor(status: number, messages: string[], code?: string) {
     super(messages.join(' '));
     this.status = status;
     this.messages = messages;
+    this.code = code;
   }
 }
 
@@ -57,9 +62,9 @@ async function request<T>(path: string, { method = 'GET', body, token }: Request
   const data: unknown = await res.json().catch(() => null);
   if (!res.ok) {
     if (res.status === 401 && token) onUnauthorized?.();
-    const message = (data as { message?: string | string[] } | null)?.message;
+    const { message, code } = (data as { message?: string | string[]; code?: string } | null) ?? {};
     const messages = Array.isArray(message) ? message : [message ?? `Request failed (${res.status})`];
-    throw new ApiError(res.status, messages);
+    throw new ApiError(res.status, messages, code);
   }
   return data as T;
 }
@@ -83,6 +88,9 @@ export const api = {
   manage: (token: string) => request<ManagedBooking>(`/bookings/manage/${encodeURIComponent(token)}`),
   cancel: (token: string) =>
     request<{ status: string }>(`/bookings/manage/${encodeURIComponent(token)}/cancel`, { method: 'POST' }),
+  assistantStatus: () => request<AssistantStatus>('/assistant/status'),
+  assistantChat: (body: { language: 'en' | 'sr'; messages: { role: 'user' | 'assistant'; content: string }[] }) =>
+    request<AssistantReply>('/assistant/chat', { method: 'POST', body }),
   login: (email: string, password: string) =>
     request<{ accessToken: string }>('/auth/login', { method: 'POST', body: { email, password } }),
 

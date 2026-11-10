@@ -1,4 +1,12 @@
-import { buildDaySlots, checkBookingRequest, countBookableStarts, courtDaySlots, dayStatus, type DayHours } from './slots.js';
+import {
+  bookableStarts,
+  buildDaySlots,
+  checkBookingRequest,
+  countBookableStarts,
+  courtDaySlots,
+  dayStatus,
+  type DayHours,
+} from './slots.js';
 
 const TZ = 'Europe/Belgrade';
 const HOURS: DayHours = { openMinute: 8 * 60, closeMinute: 23 * 60, closed: false }; // 08:00-23:00
@@ -119,5 +127,23 @@ describe('checkBookingRequest', () => {
     expect(
       checkBookingRequest({ ...base, blocks, startsAt: iso('2026-11-10T13:00:00Z'), durationMinutes: 60 }),
     ).toEqual({ ok: false, reason: 'BLOCKED' });
+  });
+});
+
+describe('bookableStarts', () => {
+  it('lists start times where the whole duration fits into free, consecutive slots', () => {
+    const slots = courtDaySlots({
+      date: '2026-11-09',
+      hours: { openMinute: 8 * 60, closeMinute: 11 * 60, closed: false }, // 08:00-11:00 local
+      bookings: [{ startsAt: iso('2026-11-09T08:00:00Z'), endsAt: iso('2026-11-09T08:30:00Z') }], // 09:00-09:30 local
+      blocks: [],
+      now: iso('2026-11-09T05:00:00Z'),
+      tz: TZ,
+    });
+    const local = (d: Date[]) => d.map((s) => s.toISOString().slice(11, 16));
+    // Free: 08:00-09:00 and 09:30-11:00 local (07:00-08:00Z and 08:30-10:00Z).
+    expect(local(bookableStarts(slots, 60))).toEqual(['07:00', '08:30', '09:00']);
+    expect(local(bookableStarts(slots, 90))).toEqual(['08:30']);
+    expect(bookableStarts(slots, 120)).toEqual([]);
   });
 });
