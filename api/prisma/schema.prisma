@@ -21,8 +21,20 @@ enum DayType {
 }
 
 enum BookingStatus {
+  /// Holding the court while the customer pays online (until holdExpiresAt).
+  PENDING
   CONFIRMED
   CANCELLED
+  /// Online payment was not completed in time; the court was released.
+  EXPIRED
+}
+
+enum PaymentStatus {
+  /// Paid at the venue (the default, and every booking made without online payment).
+  AT_VENUE
+  UNPAID
+  PAID
+  REFUNDED
 }
 
 model AdminUser {
@@ -88,7 +100,16 @@ model Booking {
   createdAt     DateTime      @default(now())
   cancelledAt   DateTime?
 
-  // An exclusion constraint (see migration) prevents overlapping CONFIRMED bookings per court.
+  // Online payment (Stripe Checkout)
+  paymentStatus     PaymentStatus @default(AT_VENUE)
+  holdExpiresAt     DateTime?     @db.Timestamptz(3)
+  checkoutSessionId String?       @unique
+  checkoutUrl       String?
+  paymentIntentId   String?
+  paidAt            DateTime?
+  refundedAt        DateTime?
+
+  // An exclusion constraint (see migrations) prevents overlapping CONFIRMED or PENDING bookings per court.
   @@index([courtId, startsAt])
   @@map("bookings")
 }

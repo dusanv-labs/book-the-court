@@ -18,6 +18,7 @@ const data = (a: string, b: string): Availability => ({
   sport: 'PADEL',
   timezone: 'Europe/Belgrade',
   slotMinutes: 30,
+  onlinePayment: false,
   durations: [60, 90, 120],
   currency: 'RSD',
   hours: { openMinute: 17 * 60, closeMinute: 20 * 60 },

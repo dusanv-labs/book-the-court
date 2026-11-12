@@ -22,6 +22,7 @@ import { APP_CONFIG, type AppConfig } from '../config/config.js';
 import { dateSchema, dayTypeSchema, idSchema, minuteSchema, sportSchema } from '../common/schemas.js';
 import { localToUtc } from '../common/time.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { occupyingBookings } from '../bookings/active.js';
 
 // ---------- Opening hours ----------
 
@@ -135,7 +136,7 @@ export class VenueService {
     }
     const clashing = await this.prisma.booking.count({
       where: {
-        status: 'CONFIRMED',
+        ...occupyingBookings(),
         startsAt: { lt: data.endsAt },
         endsAt: { gt: data.startsAt },
         ...(data.courtId ? { courtId: data.courtId } : {}),

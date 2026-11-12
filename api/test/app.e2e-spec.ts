@@ -3,11 +3,13 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import Stripe from 'stripe';
 import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import type { AssistantLlm } from '../src/assistant/agent.js';
 import { ASSISTANT_LLM } from '../src/assistant/assistant.js';
 import { hashPassword } from '../src/auth/password.js';
+import { PAYMENT_GATEWAY, type CheckoutRequest, type CheckoutState, type PaymentGateway } from '../src/payments/payments.js';
 import { localToUtc, toLocalParts } from '../src/common/time.js';
 import { isOverlapViolation, PrismaService } from '../src/prisma/prisma.service.js';
 import { ensureVenueDefaults } from '../src/seed-data.js';
@@ -70,6 +72,37 @@ const fakeLlm: AssistantLlm = {
     return message;
   },
 };
+/** Stand-in for Stripe, so CI never calls it. Webhooks are still signed and verified like Stripe's. */
+const WEBHOOK_SECRET = 'whsec_e2e_test_secret'; // pragma: allowlist secret
+process.env.STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET;
+const checkouts = new Map<string, CheckoutState & { request: CheckoutRequest }>();
+const refunds: string[] = [];
+let stripeDown = false;
+const fakePayments: PaymentGateway = {
+  createCheckout: async (r) => {
+    if (stripeDown) throw new Error('Stripe is not reachable');
+    const sessionId = `cs_test_e2e_${checkouts.size + 1}_${Date.now()}`;
+    checkouts.set(sessionId, { sessionId, bookingId: r.bookingId, status: 'open', paid: false, paymentIntentId: null, request: r });
+    return { sessionId, url: `https://checkout.stripe.test/${sessionId}` };
+  },
+  getCheckout: async (id) => {
+    const { request: _request, ...state } = checkouts.get(id)!;
+    return state;
+  },
+  expireCheckout: async (id) => {
+    const checkout = checkouts.get(id)!;
+    if (checkout.status !== 'open') throw new Error('Only an open session can be expired');
+    checkout.status = 'expired';
+  },
+  refund: async (paymentIntentId, idempotencyKey) => {
+    refunds.push(`${paymentIntentId} ${idempotencyKey}`);
+  },
+};
+/** The player pays on the (fake) Stripe page. */
+const payCheckout = (sessionId: string) =>
+  Object.assign(checkouts.get(sessionId)!, { status: 'complete', paid: true, paymentIntentId: `pi_${sessionId}` });
+const sessionOf = (checkoutUrl: string) => checkoutUrl.split('/').pop()!;
+
 const lastToolResult = (req: Anthropic.MessageStreamParams) => {
   const content = req.messages.at(-1)!.content as Anthropic.ToolResultBlockParam[];
   return JSON.parse(content[0].content as string);
@@ -79,8 +112,10 @@ beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(ASSISTANT_LLM)
     .useValue(fakeLlm)
+    .overrideProvider(PAYMENT_GATEWAY)
+    .useValue(fakePayments)
     .compile();
-  app = moduleRef.createNestApplication<NestExpressApplication>();
+  app = moduleRef.createNestApplication<NestExpressApplication>({ rawBody: true });
   setupApp(app);
   await app.init();
   prisma = app.get(PrismaService);
@@ -419,5 +454,121 @@ describe('AI booking assistant (scripted model)', () => {
     } finally {
       await prisma.assistantUsage.update({ where: { date }, data: { costMicroUsd: before.costMicroUsd } });
     }
+  });
+});
+
+describe('online payment (fake Stripe)', () => {
+  const onlineBooking = (startsAt: string) => ({ ...bookingBody(startsAt), payment: 'online' });
+  const webhook = (type: string, sessionId: string, signWith = WEBHOOK_SECRET) => {
+    const checkout = checkouts.get(sessionId)!;
+    const payload = JSON.stringify({
+      id: `evt_${sessionId}`,
+      object: 'event',
+      type,
+      data: {
+        object: {
+          id: sessionId,
+          object: 'checkout.session',
+          client_reference_id: checkout.bookingId,
+          status: checkout.status,
+          payment_status: checkout.paid ? 'paid' : 'unpaid',
+          payment_intent: checkout.paymentIntentId,
+        },
+      },
+    });
+    const signature = Stripe.webhooks.generateTestHeaderString({ payload, secret: signWith });
+    return request(app.getHttpServer())
+      .post('/api/payments/webhook')
+      .set('content-type', 'application/json')
+      .set('stripe-signature', signature)
+      .send(payload);
+  };
+
+  it('offers online payment', async () => {
+    const res = await request(app.getHttpServer()).get(`/api/availability?date=${DATE}&sport=PADEL`).expect(200);
+    expect(res.body.onlinePayment).toBe(true);
+  });
+
+  it('holds the court during payment, confirms it when the player returns, and refunds a cancellation', async () => {
+    const server = app.getHttpServer();
+    const created = await request(server).post('/api/bookings').send(onlineBooking(at(18))).expect(201);
+    expect(created.body).toMatchObject({ status: 'PENDING', paymentStatus: 'UNPAID' });
+    const sessionId = sessionOf(created.body.checkoutUrl);
+    const checkout = checkouts.get(sessionId)!.request;
+    const token = created.body.cancelToken;
+    expect(checkout).toMatchObject({ amount: created.body.price, currency: 'RSD', customerEmail: 'e2e@example.com' });
+    expect(checkout.successUrl.endsWith(`#/manage/${token}?payment=done`)).toBe(true);
+    expect((checkout.expiresAt.getTime() - Date.now()) / 60_000).toBeGreaterThan(30);
+
+    // Nobody else can take the court while the player is paying.
+    await request(server).post('/api/bookings').send(bookingBody(at(18))).expect(409);
+    const grid = await request(server).get(`/api/availability?date=${DATE}&sport=PADEL`).expect(200);
+    const court = grid.body.courts.find((c: { id: string }) => c.id === courtId);
+    expect(court.slots.find((s: { startsAt: string }) => s.startsAt === at(18)).status).toBe('booked');
+
+    let manage = await request(server).get(`/api/bookings/manage/${token}`).expect(200);
+    expect(manage.body).toMatchObject({ status: 'PENDING', paymentStatus: 'UNPAID', checkoutUrl: created.body.checkoutUrl });
+
+    // Back from Stripe before the webhook: the API asks Stripe and confirms the booking.
+    payCheckout(sessionId);
+    manage = await request(server).get(`/api/bookings/manage/${token}`).expect(200);
+    expect(manage.body).toMatchObject({ status: 'CONFIRMED', paymentStatus: 'PAID', checkoutUrl: null, canCancel: true });
+
+    // A late webhook for the same payment changes nothing.
+    await webhook('checkout.session.completed', sessionId).expect(200);
+
+    await request(server).post(`/api/bookings/manage/${token}/cancel`).expect(200);
+    manage = await request(server).get(`/api/bookings/manage/${token}`).expect(200);
+    expect(manage.body).toMatchObject({ status: 'CANCELLED', paymentStatus: 'REFUNDED' });
+    const booking = await prisma.booking.findUniqueOrThrow({ where: { cancelToken: token } });
+    expect(refunds).toEqual([`pi_${sessionId} refund-${booking.id}`]);
+  });
+
+  it('confirms a payment from a signed Stripe webhook and rejects unsigned ones', async () => {
+    const server = app.getHttpServer();
+    const created = await request(server).post('/api/bookings').send(onlineBooking(at(19))).expect(201);
+    const sessionId = sessionOf(created.body.checkoutUrl);
+    payCheckout(sessionId);
+
+    await webhook('checkout.session.completed', sessionId, 'whsec_somebody_else').expect(400); // pragma: allowlist secret
+    let booking = await prisma.booking.findUniqueOrThrow({ where: { cancelToken: created.body.cancelToken } });
+    expect(booking.status).toBe('PENDING');
+
+    await webhook('checkout.session.completed', sessionId).expect(200);
+    booking = await prisma.booking.findUniqueOrThrow({ where: { cancelToken: created.body.cancelToken } });
+    expect(booking).toMatchObject({ status: 'CONFIRMED', paymentStatus: 'PAID', paymentIntentId: `pi_${sessionId}` });
+  });
+
+  it('releases the court when the payment is not finished, and refunds a payment that arrives too late', async () => {
+    const server = app.getHttpServer();
+    const created = await request(server).post('/api/bookings').send(onlineBooking(at(21))).expect(201);
+    const sessionId = sessionOf(created.body.checkoutUrl);
+    // The hold runs out (moved into the past instead of waiting 35 minutes).
+    await prisma.booking.update({ where: { cancelToken: created.body.cancelToken }, data: { holdExpiresAt: new Date(Date.now() - 1000) } });
+    const manage = await request(server).get(`/api/bookings/manage/${created.body.cancelToken}`).expect(200);
+    expect(manage.body).toMatchObject({ status: 'EXPIRED', checkoutUrl: null, canCancel: false });
+
+    // Somebody else books the time, then the first player's payment arrives after all.
+    await request(server).post('/api/bookings').send(bookingBody(at(21))).expect(201);
+    payCheckout(sessionId);
+    await webhook('checkout.session.completed', sessionId).expect(200);
+    const late = await prisma.booking.findUniqueOrThrow({ where: { cancelToken: created.body.cancelToken } });
+    expect(late).toMatchObject({ status: 'CANCELLED', paymentStatus: 'REFUNDED' });
+    expect(refunds).toContain(`pi_${sessionId} refund-${late.id}`);
+  });
+
+  it('frees the court when a payment page is cancelled or Stripe is not reachable', async () => {
+    const server = app.getHttpServer();
+    const created = await request(server).post('/api/bookings').send(onlineBooking(at(13))).expect(201);
+    await request(server).post(`/api/bookings/manage/${created.body.cancelToken}/cancel`).expect(200);
+    expect(checkouts.get(sessionOf(created.body.checkoutUrl))!.status).toBe('expired');
+
+    stripeDown = true;
+    try {
+      await request(server).post('/api/bookings').send(onlineBooking(at(13))).expect(503);
+    } finally {
+      stripeDown = false;
+    }
+    await request(server).post('/api/bookings').send(bookingBody(at(13))).expect(201);
   });
 });

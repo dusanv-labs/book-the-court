@@ -1,7 +1,9 @@
 export type Sport = 'PADEL' | 'TENNIS' | 'FOOTBALL';
 export type DayType = 'WEEKDAY' | 'WEEKEND';
 export type SlotStatus = 'free' | 'booked' | 'blocked' | 'past';
-export type BookingStatus = 'CONFIRMED' | 'CANCELLED';
+export type BookingStatus = 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'EXPIRED';
+export type PaymentStatus = 'AT_VENUE' | 'UNPAID' | 'PAID' | 'REFUNDED';
+export type PaymentChoice = 'venue' | 'online';
 
 export const SPORTS: { value: Sport; label: string; icon: string }[] = [
   { value: 'PADEL', label: 'Padel', icon: '🏓' },
@@ -48,6 +50,8 @@ export interface Availability {
   slotMinutes: number;
   durations: number[];
   currency: string;
+  /** Online card payment (Stripe) is switched on. */
+  onlinePayment: boolean;
   hours: { openMinute: number; closeMinute: number } | null;
   prices: PriceBand[];
   courts: AvailabilityCourt[];
@@ -68,6 +72,10 @@ export interface BookingResult {
   endsAt: string;
   price: number;
   currency: string;
+  status: BookingStatus;
+  paymentStatus: PaymentStatus;
+  /** Stripe payment page, for bookings paid online. */
+  checkoutUrl: string | null;
 }
 
 export interface ManagedBooking {
@@ -78,6 +86,9 @@ export interface ManagedBooking {
   price: number;
   currency: string;
   status: BookingStatus;
+  paymentStatus: PaymentStatus;
+  checkoutUrl: string | null;
+  holdExpiresAt: string | null;
   customerName: string;
   canCancel: boolean;
   cancelCutoffMinutes: number;
@@ -111,6 +122,8 @@ export interface AdminBooking {
   endsAt: string;
   price: number;
   status: BookingStatus;
+  paymentStatus: PaymentStatus;
+  holdExpiresAt: string | null;
   customerName: string;
   customerEmail: string;
   customerPhone: string;

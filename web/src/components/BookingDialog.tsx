@@ -8,7 +8,7 @@ import { api, ApiError, errorText } from '../lib/api';
 import { loadCustomer, saveCustomer, type CustomerDetails } from '../lib/customer';
 import { previewPrice } from '../lib/pricing';
 import { formatDayOf, formatPrice, formatTime, possibleDurations } from '../lib/time';
-import type { Availability, AvailabilityCourt, BookingResult } from '../lib/types';
+import type { Availability, AvailabilityCourt, BookingResult, PaymentChoice } from '../lib/types';
 import { Button, ErrorMessage, Field, inputClass, Spinner } from './ui';
 
 export function BookingDialog({
@@ -41,6 +41,11 @@ export function BookingDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const saved = rememberable ? loadCustomer() : null;
   const [remember, setRemember] = useState(saved !== null);
+  // Players can pay online when the API has Stripe switched on; admins entering a booking for a customer cannot.
+  const canPayOnline = rememberable && data.onlinePayment;
+  const [payment, setPayment] = useState<PaymentChoice>(canPayOnline ? 'online' : 'venue');
+  const online = canPayOnline && payment === 'online';
+  const [redirecting, setRedirecting] = useState(false);
 
   const schema = useMemo(
     () =>
@@ -69,9 +74,16 @@ export function BookingDialog({
   } = useForm<CustomerDetails>({ resolver: zodResolver(schema), defaultValues: saved ?? undefined });
 
   const booking = useMutation({
-    mutationFn: (values: CustomerDetails) => api.createBooking({ courtId: court.id, startsAt, durationMinutes: duration, ...values }),
+    mutationFn: (values: CustomerDetails) =>
+      api.createBooking({ courtId: court.id, startsAt, durationMinutes: duration, ...values, payment: online ? 'online' : 'venue' }),
     onSuccess: (result, values) => {
       if (rememberable) saveCustomer(remember ? values : null);
+      if (result.checkoutUrl) {
+        // Stripe's payment page; Stripe sends the player back to the booking's manage page.
+        setRedirecting(true);
+        window.location.assign(result.checkoutUrl);
+        return;
+      }
       onBooked(result);
     },
     onError: (e) => {
@@ -155,7 +167,7 @@ export function BookingDialog({
         <div className="mb-5 flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
           <span className="text-sm text-slate-600">
             {formatTime(startsAt, data.timezone)} – {formatTime(endsAt, data.timezone)}
-            <span className="block text-xs text-slate-500">{m.dialog.payAtVenue}</span>
+            <span className="block text-xs text-slate-500">{online ? m.dialog.paidOnline : m.dialog.payAtVenue}</span>
           </span>
           <span className="text-lg font-bold">{price ?? (quote.isLoading ? <Spinner label="" /> : '—')}</span>
         </div>
@@ -163,6 +175,33 @@ export function BookingDialog({
           <div className="mb-4">
             <ErrorMessage>{errorText(quote.error, m.errors)}</ErrorMessage>
           </div>
+        )}
+
+        {canPayOnline && (
+          <fieldset className="mb-5">
+            <legend className="mb-2 text-sm font-semibold text-slate-800">{m.dialog.paymentMethod}</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {(
+                [
+                  ['online', `💳 ${m.dialog.payOnline}`],
+                  ['venue', `🏟️ ${m.dialog.payAtVenue}`],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={payment === value}
+                  onClick={() => setPayment(value)}
+                  className={`rounded-xl border px-3 py-2.5 text-sm font-semibold transition-colors ${
+                    payment === value ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-300 bg-white hover:border-emerald-500'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {online && <p className="mt-2 text-xs text-slate-500">{m.dialog.payOnlineHint}</p>}
+          </fieldset>
         )}
 
         <form className="space-y-4" onSubmit={handleSubmit((v) => booking.mutate(v))} noValidate>
@@ -194,10 +233,20 @@ export function BookingDialog({
 
           {booking.isError && <ErrorMessage>{errorText(booking.error, m.errors)}</ErrorMessage>}
 
-          <Button type="submit" className="w-full py-3 text-base" disabled={booking.isPending || quote.isError || !options.includes(duration)}>
-            {booking.isPending ? m.dialog.submitting : m.dialog.submit(price ?? '…')}
+          <Button
+            type="submit"
+            className="w-full py-3 text-base"
+            disabled={booking.isPending || redirecting || quote.isError || !options.includes(duration)}
+          >
+            {redirecting
+              ? m.dialog.redirecting
+              : booking.isPending
+                ? m.dialog.submitting
+                : online
+                  ? m.dialog.submitOnline(price ?? '…')
+                  : m.dialog.submit(price ?? '…')}
           </Button>
-          <p className="text-center text-xs text-slate-500">{m.dialog.note}</p>
+          <p className="text-center text-xs text-slate-500">{canPayOnline ? m.dialog.noteOnline : m.dialog.note}</p>
         </form>
       </div>
     </div>

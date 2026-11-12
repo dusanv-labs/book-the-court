@@ -3,7 +3,8 @@
 #   API  http://localhost:3000/api  (docs: /api/docs)
 #   DB   localhost:5433  (user/password/db: btc)
 # Everything here is for local use only; the values below are not used in production.
-# The AI assistant stays off unless ANTHROPIC_API_KEY is set in your shell.
+# The AI assistant stays off unless ANTHROPIC_API_KEY is set in your shell, and online payment
+# unless STRIPE_SECRET_KEY (a Stripe test mode key) is set.
 
 services:
   db:
@@ -35,6 +36,9 @@ services:
       SEED_ADMIN_EMAIL: demo@example.com
       SEED_ADMIN_PASSWORD: court-demo-2026 # pragma: allowlist secret (public demo login)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      WEB_URL: http://localhost:8080/
     ports: ['3000:3000']
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]

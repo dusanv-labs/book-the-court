@@ -158,18 +158,33 @@ export function BookingsAdminPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 font-mono">{b.code}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">{formatPrice(b.price)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                    {formatPrice(b.price)}
+                    {(b.paymentStatus === 'PAID' || b.paymentStatus === 'REFUNDED') && (
+                      <span className="block text-xs text-slate-500">
+                        {b.paymentStatus === 'PAID' ? `💳 ${m.admin.paidOnline}` : m.admin.refunded}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                        b.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                      className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold ${
+                        b.status === 'CONFIRMED'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : b.status === 'PENDING'
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-slate-100 text-slate-600'
                       }`}
                     >
-                      {b.status === 'CONFIRMED' ? m.admin.statusConfirmed : m.admin.statusCancelled}
+                      {b.status === 'CONFIRMED'
+                        ? m.admin.statusConfirmed
+                        : b.status === 'PENDING'
+                          ? m.admin.awaitingPayment
+                          : m.admin.statusCancelled}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {b.status === 'CONFIRMED' && (
+                    {(b.status === 'CONFIRMED' || b.status === 'PENDING') && (
                       <Button
                         variant="danger"
                         className="px-3 py-1"

@@ -6,7 +6,8 @@ import { APP_CONFIG, type AppConfig } from './config/config.js';
 import { setupApp } from './setup-app.js';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // rawBody: Stripe webhooks are verified against the exact bytes Stripe sent.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
   setupApp(app);
   app.enableShutdownHooks();
   const { PORT } = app.get<AppConfig>(APP_CONFIG);

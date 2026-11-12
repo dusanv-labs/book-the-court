@@ -22,3 +22,9 @@ services:
         value: https://dusanv-labs.github.io
       - key: ANTHROPIC_API_KEY
         sync: false # entered once in the Render dashboard; without it the AI assistant is switched off
+      - key: STRIPE_SECRET_KEY
+        sync: false # Stripe test mode key (sk_test_...), entered in the Render dashboard; without it players pay at the venue
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false # signing secret of the Stripe webhook endpoint (whsec_...), entered in the Render dashboard
+      - key: WEB_URL
+        value: https://dusanv-labs.github.io/book-the-court/ # Stripe sends players back here after paying

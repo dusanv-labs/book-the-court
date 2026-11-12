@@ -14,6 +14,7 @@ import type {
   ReportGroupBy,
   RevenueReport,
   Sport,
+  PaymentChoice,
 } from './types';
 
 export const API_URL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api';
@@ -143,6 +144,7 @@ export const api = {
     customerName: string;
     customerEmail: string;
     customerPhone: string;
+    payment?: PaymentChoice;
   }) => request<BookingResult>('/bookings', { method: 'POST', body }),
   manage: (token: string) => request<ManagedBooking>(`/bookings/manage/${encodeURIComponent(token)}`),
   cancel: (token: string) =>

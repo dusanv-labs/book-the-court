@@ -41,6 +41,8 @@ export class ReportsService {
       this.prisma.booking.findMany({
         where: {
           courtId: { in: courts.map((c) => c.id) },
+          // Bookings still waiting for (or never finished) online payment are not revenue or cancellations.
+          status: { in: ['CONFIRMED', 'CANCELLED'] },
           startsAt: { gte: localToUtc(q.from, 0, tz), lt: localToUtc(q.to, 24 * 60, tz) },
         },
         select: { courtId: true, startsAt: true, endsAt: true, price: true, status: true },
@@ -53,7 +55,8 @@ export class ReportsService {
       to: q.to,
       groupBy: q.groupBy,
       courts,
-      bookings,
+      // The query keeps only these two statuses.
+      bookings: bookings.map((b) => ({ ...b, status: b.status === 'CANCELLED' ? ('CANCELLED' as const) : ('CONFIRMED' as const) })),
       hoursFor: (dow) => byDay.get(dow) ?? null,
       now: new Date(),
       tz,

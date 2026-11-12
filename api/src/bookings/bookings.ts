@@ -21,7 +21,10 @@ import { AdminGuard, AuthModule } from '../auth/auth.js';
 import { APP_CONFIG, type AppConfig } from '../config/config.js';
 import { dateSchema, idSchema, sportSchema } from '../common/schemas.js';
 import { addMinutes, dayOfWeekOf, localToUtc, toLocalParts } from '../common/time.js';
+import type { Booking } from '../generated/prisma/client.js';
+import { HOLD_MINUTES, PaymentsModule, PaymentsService } from '../payments/payments.js';
 import { isOverlapViolation, isUniqueViolation, PrismaService } from '../prisma/prisma.service.js';
+import { occupyingBookings } from './active.js';
 import { generateBookingCode, generateCancelToken } from './domain/codes.js';
 import { MissingPriceRuleError, quotePrice } from './domain/pricing.js';
 import {
@@ -68,6 +71,8 @@ const createBookingSchema = z.object({
     .string()
     .trim()
     .regex(/^\+?[0-9 ()/-]{6,20}$/, 'Invalid phone number'),
+  /** "online" opens a Stripe payment page; the court is held until the payment is finished. */
+  payment: z.enum(['venue', 'online']).default('venue'),
 });
 const tokenSchema = z.string().regex(/^[A-Za-z0-9_-]{32}$/, 'Invalid token');
 const adminBookingsQuerySchema = z.object({ date: dateSchema });
@@ -79,6 +84,7 @@ export class BookingsService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly payments: PaymentsService,
   ) {}
 
   private get tz() {
@@ -100,7 +106,7 @@ export class BookingsService {
     const courtIds = courts.map((c) => c.id);
     const [bookings, blocks] = await Promise.all([
       this.prisma.booking.findMany({
-        where: { status: 'CONFIRMED', courtId: { in: courtIds }, startsAt: { lt: rangeEnd }, endsAt: { gt: rangeStart } },
+        where: { ...occupyingBookings(), courtId: { in: courtIds }, startsAt: { lt: rangeEnd }, endsAt: { gt: rangeStart } },
         select: { courtId: true, startsAt: true, endsAt: true },
       }),
       this.prisma.block.findMany({
@@ -157,7 +163,7 @@ export class BookingsService {
     const courtIds = courts.map((c) => c.id);
     const [bookings, blocks, rules] = await Promise.all([
       this.prisma.booking.findMany({
-        where: { status: 'CONFIRMED', courtId: { in: courtIds }, startsAt: { lt: dayEnd }, endsAt: { gt: dayStart } },
+        where: { ...occupyingBookings(), courtId: { in: courtIds }, startsAt: { lt: dayEnd }, endsAt: { gt: dayStart } },
         select: { courtId: true, startsAt: true, endsAt: true },
       }),
       this.prisma.block.findMany({
@@ -174,6 +180,7 @@ export class BookingsService {
       slotMinutes: SLOT_MINUTES,
       durations: ALLOWED_DURATIONS,
       currency: CURRENCY,
+      onlinePayment: this.payments.enabled,
       hours: hours && !hours.closed ? { openMinute: hours.openMinute, closeMinute: hours.closeMinute } : null,
       prices: rules.map(({ dayType, startMinute, endMinute, pricePerHour }) => ({ dayType, startMinute, endMinute, pricePerHour })),
       courts: courts.map((court) => ({
@@ -198,7 +205,7 @@ export class BookingsService {
     const [hoursFor, bookings, blocks, rules] = await Promise.all([
       this.hoursMap(),
       this.prisma.booking.findMany({
-        where: { courtId, status: 'CONFIRMED', startsAt: { lt: endsAt }, endsAt: { gt: startsAt } },
+        where: { ...occupyingBookings(), courtId, startsAt: { lt: endsAt }, endsAt: { gt: startsAt } },
         select: { startsAt: true, endsAt: true },
       }),
       this.prisma.block.findMany({
@@ -237,6 +244,10 @@ export class BookingsService {
   }
 
   async create(dto: CreateBookingDto) {
+    const online = dto.payment === 'online';
+    if (online && !this.payments.enabled) throw new BadRequestException('Online payment is not available.');
+    // Courts held for payments that were never finished must not block this booking.
+    await this.payments.releaseExpiredHolds();
     const { court, endsAt, price } = await this.evaluate(dto.courtId, dto.startsAt, dto.durationMinutes);
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
@@ -251,8 +262,13 @@ export class BookingsService {
             customerEmail: dto.customerEmail,
             customerPhone: dto.customerPhone,
             price,
+            // An online booking holds the court until the payment is finished (or the hold runs out).
+            ...(online ? { status: 'PENDING', paymentStatus: 'UNPAID', holdExpiresAt: addMinutes(new Date(), HOLD_MINUTES) } : {}),
           },
         });
+        const checkoutUrl = online
+          ? await this.payments.startCheckout(booking, this.paymentDescription(booking, court.name), CURRENCY)
+          : null;
         return {
           code: booking.code,
           cancelToken: booking.cancelToken,
@@ -261,6 +277,9 @@ export class BookingsService {
           endsAt: booking.endsAt,
           price: booking.price,
           currency: CURRENCY,
+          status: booking.status,
+          paymentStatus: booking.paymentStatus,
+          checkoutUrl,
         };
       } catch (e) {
         // The database is the final guard against double booking (two requests at the same moment).
@@ -272,12 +291,26 @@ export class BookingsService {
     throw new ConflictException('Could not create the booking. Please try again.');
   }
 
+  private paymentDescription(booking: Booking, courtName: string) {
+    const { date, minute } = toLocalParts(booking.startsAt, this.tz);
+    const time = `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
+    return `${courtName}, ${date} ${time} (booking ${booking.code})`;
+  }
+
   async findByToken(token: string) {
-    const booking = await this.prisma.booking.findUnique({
-      where: { cancelToken: token },
-      include: { court: { select: { name: true, sport: true } } },
-    });
+    const find = () =>
+      this.prisma.booking.findUnique({
+        where: { cancelToken: token },
+        include: { court: { select: { name: true, sport: true } } },
+      });
+    let booking = await find();
     if (!booking) throw new NotFoundException('Booking not found.');
+    if (booking.paymentStatus === 'UNPAID') {
+      // The player may be back from the payment page before Stripe's webhook arrives: ask Stripe directly.
+      await this.payments.refresh(booking);
+      booking = (await find()) ?? booking;
+    }
+    const holding = booking.status === 'PENDING' && !!booking.holdExpiresAt && booking.holdExpiresAt > new Date();
     return {
       code: booking.code,
       court: booking.court,
@@ -285,9 +318,13 @@ export class BookingsService {
       endsAt: booking.endsAt,
       price: booking.price,
       currency: CURRENCY,
-      status: booking.status,
+      status: holding || booking.status !== 'PENDING' ? booking.status : 'EXPIRED',
+      paymentStatus: booking.paymentStatus,
+      // Shown while the court is held, so the player can go back to the payment page.
+      checkoutUrl: holding ? booking.checkoutUrl : null,
+      holdExpiresAt: holding ? booking.holdExpiresAt : null,
       customerName: booking.customerName,
-      canCancel: booking.status === 'CONFIRMED' && this.beforeCutoff(booking.startsAt),
+      canCancel: (booking.status === 'CONFIRMED' || holding) && this.beforeCutoff(booking.startsAt),
       cancelCutoffMinutes: CANCEL_CUTOFF_MINUTES,
     };
   }
@@ -295,20 +332,21 @@ export class BookingsService {
   async cancelByToken(token: string) {
     const booking = await this.prisma.booking.findUnique({ where: { cancelToken: token } });
     if (!booking) throw new NotFoundException('Booking not found.');
-    if (booking.status === 'CANCELLED') return { status: booking.status };
+    if (booking.status === 'CANCELLED' || booking.status === 'EXPIRED') return { status: booking.status };
     if (!this.beforeCutoff(booking.startsAt)) {
       throw new BadRequestException(
         `Online cancellation is possible until ${CANCEL_CUTOFF_MINUTES / 60} hours before the start.`,
       );
     }
-    return this.markCancelled(booking.id);
+    return this.cancel(booking);
   }
 
   listForDay(date: string) {
     const dayStart = localToUtc(date, 0, this.tz);
     const dayEnd = localToUtc(date, 24 * 60, this.tz);
     return this.prisma.booking.findMany({
-      where: { startsAt: { lt: dayEnd }, endsAt: { gt: dayStart } },
+      // Unfinished online payments that released their court are left out.
+      where: { startsAt: { lt: dayEnd }, endsAt: { gt: dayStart }, status: { not: 'EXPIRED' } },
       orderBy: [{ startsAt: 'asc' }],
       select: {
         id: true,
@@ -317,6 +355,8 @@ export class BookingsService {
         endsAt: true,
         price: true,
         status: true,
+        paymentStatus: true,
+        holdExpiresAt: true,
         customerName: true,
         customerEmail: true,
         customerPhone: true,
@@ -329,16 +369,35 @@ export class BookingsService {
   async cancelById(id: string) {
     const booking = await this.prisma.booking.findUnique({ where: { id } });
     if (!booking) throw new NotFoundException('Booking not found.');
-    if (booking.status === 'CANCELLED') return { status: booking.status };
-    return this.markCancelled(id);
+    if (booking.status === 'CANCELLED' || booking.status === 'EXPIRED') return { status: booking.status };
+    return this.cancel(booking);
   }
 
-  private async markCancelled(id: string) {
-    const updated = await this.prisma.booking.update({
-      where: { id },
-      data: { status: 'CANCELLED', cancelledAt: new Date() },
+  /** Cancels a booking; one paid online is refunded first, one still being paid has its payment page closed. */
+  private async cancel(booking: Booking, attempt = 0): Promise<{ status: Booking['status'] }> {
+    if (booking.paymentStatus === 'PAID') {
+      // Refund first: if it fails, the booking stays as it was and the player can simply try again.
+      await this.payments.refundPaid(booking);
+      const updated = await this.prisma.booking.update({
+        where: { id: booking.id },
+        data: { status: 'CANCELLED', cancelledAt: new Date(), paymentStatus: 'REFUNDED', refundedAt: new Date() },
+      });
+      return { status: updated.status };
+    }
+    // Only if nothing changed meanwhile (a payment could arrive at this very moment).
+    const { count } = await this.prisma.booking.updateMany({
+      where: { id: booking.id, status: booking.status, paymentStatus: booking.paymentStatus },
+      data: { status: 'CANCELLED', cancelledAt: new Date(), holdExpiresAt: null },
     });
-    return { status: updated.status };
+    if (count === 0) {
+      const current = await this.prisma.booking.findUnique({ where: { id: booking.id } });
+      if (!current || current.status === 'CANCELLED' || current.status === 'EXPIRED' || attempt > 0) {
+        return { status: current?.status ?? 'CANCELLED' };
+      }
+      return this.cancel(current, attempt + 1);
+    }
+    if (booking.paymentStatus === 'UNPAID') await this.payments.closeCheckout(booking);
+    return { status: 'CANCELLED' };
   }
 
   private beforeCutoff(startsAt: Date) {
@@ -371,7 +430,10 @@ export class BookingsController {
 
   @Post('bookings')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  @ApiOperation({ summary: 'Create a booking. Returns a booking code and a token for the manage/cancel link.' })
+  @ApiOperation({
+    summary:
+      'Create a booking. Returns a booking code and a token for the manage/cancel link. With payment "online" it also returns a Stripe payment page (checkoutUrl) and holds the court until the payment is finished.',
+  })
   create(@Body({ schema: createBookingSchema }) body: CreateBookingDto) {
     return this.bookings.create(body);
   }
@@ -411,7 +473,7 @@ export class AdminBookingsController {
 }
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, PaymentsModule],
   controllers: [BookingsController, AdminBookingsController],
   providers: [BookingsService],
   exports: [BookingsService],

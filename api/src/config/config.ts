@@ -21,6 +21,24 @@ const configSchema = z.object({
   ASSISTANT_DAILY_BUDGET_USD: z.coerce.number().min(0).default(1),
   /** Questions per day from one IP address. */
   ASSISTANT_IP_DAILY_REQUESTS: z.coerce.number().int().min(0).default(10),
+  // Online payment with Stripe Checkout. Without a key, players pay at the venue (as before).
+  STRIPE_SECRET_KEY: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined)
+    .refine((v) => !v || /^(sk|rk)_test_/.test(v), 'This demo accepts only Stripe test mode keys (sk_test_…)'),
+  /** Signing secret of the Stripe webhook endpoint (whsec_…). Without it, payments are checked when the player returns. */
+  STRIPE_WEBHOOK_SECRET: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || undefined),
+  /** Public address of the web app; Stripe sends players back here after paying. */
+  WEB_URL: z
+    .url()
+    .default('http://localhost:5173/')
+    .transform((v) => (v.endsWith('/') ? v : `${v}/`)),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
