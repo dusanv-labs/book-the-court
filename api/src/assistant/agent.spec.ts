@@ -1,17 +1,26 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { ConflictException } from '@nestjs/common';
 import { z } from 'zod';
-import { type AssistantLlm, defineTool, runAgent, toApiTool, type UsageTotals } from './agent.js';
+import { type AgentEvents, type AssistantLlm, defineTool, runAgent, toApiTool, type UsageTotals } from './agent.js';
 import { timeOfDaySchema } from './domain/conversation.js';
 
-/** A fake model that returns prepared responses in order and records every request. */
+/**
+ * A fake model that returns prepared responses in order and records every request.
+ * Text is "streamed" in two pieces per text block, like the real stream sends it in small pieces.
+ */
 function scriptedLlm(...responses: Partial<Anthropic.Message>[]) {
-  const requests: Anthropic.MessageCreateParamsNonStreaming[] = [];
+  const requests: Anthropic.MessageStreamParams[] = [];
   const llm: AssistantLlm = {
-    createMessage: async (params) => {
+    streamMessage: async (params, { onText }) => {
       requests.push(structuredClone(params));
       const next = responses.shift();
       if (!next) throw new Error('No more scripted responses');
+      for (const block of next.content ?? []) {
+        if (block.type !== 'text') continue;
+        const half = Math.ceil(block.text.length / 2);
+        onText?.(block.text.slice(0, half));
+        onText?.(block.text.slice(half));
+      }
       return {
         id: 'msg',
         type: 'message',
@@ -29,7 +38,7 @@ function scriptedLlm(...responses: Partial<Anthropic.Message>[]) {
 
 const text = (t: string) => ({ type: 'text', text: t, citations: null }) as Anthropic.TextBlock;
 const toolUse = (id: string, name: string, input: unknown) => ({ type: 'tool_use', id, name, input }) as Anthropic.ToolUseBlock;
-const newUsage = (): UsageTotals => ({ calls: 0, inputTokens: 0, outputTokens: 0, costMicroUsd: 0 });
+const newUsage = (): UsageTotals => ({ calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costMicroUsd: 0 });
 
 const echo = defineTool({
   name: 'echo',
@@ -46,8 +55,16 @@ const busy = defineTool({
   },
 });
 
-const ask = (llm: AssistantLlm, usage = newUsage()) =>
-  runAgent({ llm, model: 'claude-haiku-5-5', system: 'test', tools: [echo, busy], usage, messages: [{ role: 'user', content: 'hi' }] });
+const ask = (llm: AssistantLlm, usage = newUsage(), events?: AgentEvents) =>
+  runAgent({
+    llm,
+    model: 'claude-haiku-5-5',
+    system: [{ type: 'text', text: 'test' }],
+    tools: [echo, busy],
+    usage,
+    events,
+    messages: [{ role: 'user', content: 'hi' }],
+  });
 
 describe('runAgent', () => {
   it('runs the requested tools, sends all results back in one message and returns the final text', async () => {
@@ -69,7 +86,58 @@ describe('runAgent', () => {
     ]);
     // The assistant turn is sent back unchanged before the results.
     expect(requests[1].messages.at(-2)).toEqual({ role: 'assistant', content: expect.any(Array) });
-    expect(usage).toEqual({ calls: 2, inputTokens: 2000, outputTokens: 200, costMicroUsd: 2 * (100 + 50) });
+    expect(usage).toEqual({ calls: 2, inputTokens: 2000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0, costMicroUsd: 2 * (100 + 50) });
+  });
+
+  it('streams the text of every round in order and reports each tool before it runs', async () => {
+    const { llm } = scriptedLlm(
+      { stop_reason: 'tool_use', content: [text('Let me check.'), toolUse('t1', 'echo', { at: '18:30' })] },
+      { content: [text('Padel is free at 18:30.')] },
+    );
+    const events: string[] = [];
+    const result = await ask(llm, newUsage(), {
+      onText: (delta) => events.push(`text:${delta}`),
+      onTool: (name) => events.push(`tool:${name}`),
+    });
+    expect(events).toEqual([
+      'text:Let me ',
+      'text:check.',
+      'tool:echo',
+      'text:\n\n',
+      'text:Padel is fre',
+      'text:e at 18:30.',
+    ]);
+    // The streamed pieces add up to the final answer.
+    expect(events.filter((e) => e.startsWith('text:')).map((e) => e.slice(5)).join('')).toBe(result.text);
+  });
+
+  it('counts prompt cache reads and writes in the usage and the cost', async () => {
+    const { llm } = scriptedLlm({
+      content: [text('Hi!')],
+      usage: { input_tokens: 100, output_tokens: 10, cache_creation_input_tokens: 2000, cache_read_input_tokens: 0 } as Anthropic.Usage,
+    }, {
+      content: [text('Hi again!')],
+      usage: { input_tokens: 100, output_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 2000 } as Anthropic.Usage,
+    });
+    const first = newUsage();
+    const second = newUsage();
+    await ask(llm, first);
+    await ask(llm, second);
+    expect(first).toMatchObject({ cacheWriteTokens: 2000, cacheReadTokens: 0 });
+    expect(second).toMatchObject({ cacheWriteTokens: 0, cacheReadTokens: 2000 });
+    // Haiku 5.5: reading the cached prompt costs a tenth of writing it fresh.
+    expect(second.costMicroUsd).toBeLessThan(first.costMicroUsd / 5);
+  });
+
+  it('stops before the next model call when the visitor has left', async () => {
+    const abort = new AbortController();
+    const { llm, requests } = scriptedLlm(
+      { stop_reason: 'tool_use', content: [toolUse('t1', 'echo', { at: '18:30' })] },
+      { content: [text('never sent')] },
+    );
+    const run = ask(llm, newUsage(), { signal: abort.signal, onTool: () => abort.abort() });
+    await expect(run).rejects.toThrow();
+    expect(requests).toHaveLength(1);
   });
 
   it('returns invalid input and unknown tools to the model as errors instead of failing', async () => {

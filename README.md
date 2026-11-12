@@ -133,7 +133,7 @@ Interactive OpenAPI docs are served at `/api/docs`.
 |---|---|
 | Public | `GET /api/courts`, `GET /api/availability`, `GET /api/availability/days`, `GET /api/venue/hours`, `GET /api/venue/prices` |
 | Booking | `GET /api/bookings/quote`, `POST /api/bookings`, `GET /api/bookings/manage/:token`, `POST /api/bookings/manage/:token/cancel` |
-| AI assistant | `GET /api/assistant/status`, `POST /api/assistant/chat` |
+| AI assistant | `GET /api/assistant/status`, `POST /api/assistant/chat`, `POST /api/assistant/chat/stream` (streamed, newline-delimited JSON) |
 | Auth | `POST /api/auth/login` |
 | Admin (JWT) | `/api/admin/bookings`, `/api/admin/courts`, `/api/admin/venue/hours`, `/api/admin/venue/prices`, `/api/admin/venue/blocks`, `/api/admin/reports/revenue` |
 
@@ -152,6 +152,8 @@ The assistant is a small agent in `api/src/assistant/`: the API sends the conver
 | `get_calendar_overview` | status of each day (available, limited, full, closed) for a sport |
 | `find_available_slots` | free start times per court for a day, duration and time window, with exact prices |
 | `suggest_booking_options` | up to 4 options to show as cards; each one is checked again with the normal booking rules before it is shown |
+
+The answer is **streamed**: the API forwards the text to the page while Claude writes it, together with a note when a tool is running ("Checking free courts…"), and the cards come in the last line. If the visitor leaves the page, the request to Claude is stopped. The tool definitions and fixed instructions are the same for every question, so they are sent with a **prompt cache** breakpoint and later calls read them from the cache at a tenth of the price. The current date goes after the breakpoint, so it does not break the cache.
 
 Guardrails:
 - The assistant cannot book, cancel or change anything; the visitor always confirms in the normal booking form.

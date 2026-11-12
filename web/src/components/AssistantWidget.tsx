@@ -62,23 +62,41 @@ export function AssistantWidget({ onBooked }: { onBooked: (result: BookingResult
     slotIndex: number;
     duration: number;
   } | null>(null);
+  /** The answer while it is being written; `checking` is true while a tool looks up courts. */
+  const [live, setLive] = useState<{ text: string; checking: boolean } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Leaving the page stops the answer, so the API stops paying for it.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const status = useQuery({ queryKey: ['assistant-status'], queryFn: api.assistantStatus, staleTime: 5 * 60_000 });
 
   const chat = useMutation({
-    mutationFn: (history: ChatMessage[]) =>
-      api.assistantChat({
-        language: lang,
-        messages: history.filter((msg) => !msg.local).map(({ role, content, suggestions }) => ({
-          role,
-          content: withShownCards(content, suggestions),
-        })),
-      }),
+    mutationFn: (history: ChatMessage[]) => {
+      abortRef.current = new AbortController();
+      setLive({ text: '', checking: false });
+      return api.assistantChatStream(
+        {
+          language: lang,
+          messages: history.filter((msg) => !msg.local).map(({ role, content, suggestions }) => ({
+            role,
+            content: withShownCards(content, suggestions),
+          })),
+        },
+        {
+          onText: (delta) => setLive((prev) => ({ text: (prev?.text ?? '') + delta, checking: false })),
+          onTool: () => setLive((prev) => ({ text: prev?.text ?? '', checking: true })),
+        },
+        abortRef.current.signal,
+      );
+    },
+    onSettled: () => setLive(null),
     onSuccess: (reply) =>
       setMessages((prev) => [...prev, { role: 'assistant', content: reply.reply, suggestions: reply.suggestions }]),
     onError: (error, history) => {
+      if (abortRef.current?.signal.aborted) return;
       // The unanswered question is dropped from what the model sees, so the conversation stays valid.
       const asked = history.at(-1);
       setMessages((prev) => [
@@ -102,14 +120,16 @@ export function AssistantWidget({ onBooked }: { onBooked: (result: BookingResult
   const tooLong = sent >= MAX_MESSAGES - 1;
   const unavailable = status.data && !status.data.available;
 
-  // A new reply is shown from its first line (the cards follow below); anything else scrolls to the end.
+  // A reply is shown from its first line, also while it is being written (the cards follow below);
+  // anything else scrolls to the end.
+  const answering = !!live?.text;
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
     const last = [...list.querySelectorAll<HTMLElement>('[data-message]')].at(-1);
-    const top = !chat.isPending && last?.dataset.message === 'assistant' ? last.offsetTop - 16 : list.scrollHeight;
+    const top = last?.dataset.message === 'assistant' ? last.offsetTop - 16 : list.scrollHeight;
     list.scrollTo({ top, behavior: 'smooth' });
-  }, [messages, chat.isPending]);
+  }, [messages, chat.isPending, answering]);
 
   useEffect(() => {
     if (!open) return;
@@ -209,7 +229,13 @@ export function AssistantWidget({ onBooked }: { onBooked: (result: BookingResult
             </button>
           </header>
 
-          <div ref={listRef} className="relative flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4" aria-live="polite">
+          <div
+            ref={listRef}
+            className="relative flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4"
+            aria-live="polite"
+            // Screen readers wait for the whole answer instead of reading every streamed piece.
+            aria-busy={chat.isPending}
+          >
             <Bubble role="assistant">{t.intro}</Bubble>
             {messages.length === 0 && !unavailable && (
               <div className="flex flex-col items-start gap-2">
@@ -264,7 +290,12 @@ export function AssistantWidget({ onBooked }: { onBooked: (result: BookingResult
                 )}
               </div>
             ))}
-            {chat.isPending && (
+            {live?.text && (
+              <div data-message="assistant" className="space-y-2">
+                <Bubble role="assistant">{live.text}</Bubble>
+              </div>
+            )}
+            {chat.isPending && (!live?.text || live.checking) && (
               <p className="flex items-center gap-2 text-sm text-slate-500">
                 <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
                 {t.thinking}

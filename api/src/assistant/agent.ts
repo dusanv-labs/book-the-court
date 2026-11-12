@@ -5,7 +5,24 @@ import { estimateCostMicroUsd } from './domain/cost.js';
 
 /** The part of the Anthropic client the assistant uses; replaced by a scripted fake in tests. */
 export interface AssistantLlm {
-  createMessage(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message>;
+  /**
+   * Streams one model response: `onText` receives each piece of text as soon as it is written,
+   * and the promise resolves with the complete message (stop reason, tool calls, usage).
+   */
+  streamMessage(
+    params: Anthropic.MessageStreamParams,
+    options: { onText?: (delta: string) => void; signal?: AbortSignal },
+  ): Promise<Anthropic.Message>;
+}
+
+/** Live progress of one answer, used by the streaming endpoint. */
+export interface AgentEvents {
+  /** A piece of the answer text, in order. */
+  onText?(delta: string): void;
+  /** A tool is about to run (the page shows "checking free courts"). */
+  onTool?(name: string): void;
+  /** Aborted when the visitor closes the page, so no more tokens are paid for. */
+  signal?: AbortSignal;
 }
 
 /** A tool the model can call. Input is validated with the same Zod schema that describes it to the model. */
@@ -29,6 +46,9 @@ export interface UsageTotals {
   calls: number;
   inputTokens: number;
   outputTokens: number;
+  /** Prompt tokens read from or written to the prompt cache (also included in the cost). */
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
   costMicroUsd: number;
 }
 
@@ -46,14 +66,16 @@ export interface AgentResult {
 export async function runAgent(params: {
   llm: AssistantLlm;
   model: string;
-  system: string;
+  /** Fixed instructions first (cached), then the parts that change per request. */
+  system: Anthropic.TextBlockParam[];
   tools: AgentTool[];
   messages: Anthropic.MessageParam[];
   usage: UsageTotals;
+  events?: AgentEvents;
   maxRounds?: number;
   maxTokens?: number;
 }): Promise<AgentResult> {
-  const { llm, model, system, tools, usage } = params;
+  const { llm, model, system, tools, usage, events = {} } = params;
   const messages = [...params.messages];
   const apiTools = tools.map(toApiTool);
   const byName = new Map(tools.map((t) => [t.name, t]));
@@ -62,18 +84,33 @@ export async function runAgent(params: {
   const answer = () => parts.join('\n\n');
 
   for (let round = 0; round < (params.maxRounds ?? 6); round++) {
-    const message = await llm.createMessage({
-      model,
-      max_tokens: params.maxTokens ?? 4096,
-      system,
-      tools: apiTools,
-      messages,
-      // Short chat answers and simple tool calls do not need deep reasoning.
-      output_config: { effort: 'low' },
-    });
+    events.signal?.throwIfAborted();
+    // Text of a later round starts on a new paragraph, as in the final answer.
+    let roundHasText = false;
+    const onText = (delta: string) => {
+      if (!roundHasText && parts.length > 0) events.onText?.('\n\n');
+      roundHasText = true;
+      events.onText?.(delta);
+    };
+    const message = await llm.streamMessage(
+      {
+        model,
+        max_tokens: params.maxTokens ?? 4096,
+        system,
+        // Tool inputs are a few short fields, so they are not streamed (eager_input_streaming stays off):
+        // the API checks them against the schema before they reach us, and runTool validates them again.
+        tools: apiTools,
+        messages,
+        // Short chat answers and simple tool calls do not need deep reasoning.
+        output_config: { effort: 'low' },
+      },
+      { onText: events.onText ? onText : undefined, signal: events.signal },
+    );
     usage.calls++;
     usage.inputTokens += message.usage.input_tokens;
     usage.outputTokens += message.usage.output_tokens;
+    usage.cacheReadTokens += message.usage.cache_read_input_tokens ?? 0;
+    usage.cacheWriteTokens += message.usage.cache_creation_input_tokens ?? 0;
     usage.costMicroUsd += estimateCostMicroUsd(model, message.usage);
 
     const text = message.content
@@ -91,6 +128,7 @@ export async function runAgent(params: {
 
     // The assistant turn goes back unchanged (including thinking blocks), followed by all results in one message.
     messages.push({ role: 'assistant', content: message.content });
+    for (const call of toolCalls) events.onTool?.(call.name);
     const results = await Promise.all(toolCalls.map((call) => runTool(byName.get(call.name), call)));
     messages.push({ role: 'user', content: results });
   }

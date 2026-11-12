@@ -48,10 +48,24 @@ test('the assistant shows suggestions whose Book button opens the booking form',
   };
 
   const sent: unknown[] = [];
+  const reply = `${court.name} is free at ${suggestion.startTime}.`;
   await page.route('**/api/assistant/status', (route) => json(route, { enabled: true, available: true }));
-  await page.route('**/api/assistant/chat', (route) => {
-    if (route.request().method() === 'POST') sent.push(route.request().postDataJSON());
-    return json(route, { reply: `${court.name} is free at ${suggestion.startTime}.`, suggestions: [suggestion] });
+  // The streaming answer: pieces of text, a tool call, then the final reply with the cards.
+  await page.route('**/api/assistant/chat/stream', (route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
+    sent.push(route.request().postDataJSON());
+    const lines = [
+      { type: 'tool', name: 'find_available_slots' },
+      ...reply.split(/(?<= )/).map((text) => ({ type: 'text', text })),
+      { type: 'tool', name: 'suggest_booking_options' },
+      { type: 'done', reply, suggestions: [suggestion] },
+    ];
+    return route.fulfill({
+      status: 200,
+      headers: CORS,
+      contentType: 'application/x-ndjson',
+      body: lines.map((line) => JSON.stringify(line)).join('\n') + '\n',
+    });
   });
 
   await openBookingPage(page);
@@ -61,7 +75,8 @@ test('the assistant shows suggestions whose Book button opens the booking form',
 
   await panel.getByRole('textbox').fill('Is there a free tennis court?');
   await panel.getByRole('button', { name: 'Send' }).click();
-  await expect(panel).toContainText(`${court.name} is free at ${suggestion.startTime}.`);
+  await expect(panel).toContainText(reply);
+  await expect(panel).not.toContainText('Checking free courts');
   expect(sent).toEqual([{ language: 'en', messages: [{ role: 'user', content: 'Is there a free tennis court?' }] }]);
 
   const card = panel.getByRole('listitem').filter({ hasText: court.name });
@@ -71,6 +86,27 @@ test('the assistant shows suggestions whose Book button opens the booking form',
   const form = page.getByRole('dialog', { name: `Book ${court.name}` });
   await expect(form).toBeVisible();
   await expect(form).toContainText(`starts at ${suggestion.startTime}`);
+});
+
+test('a limit error from the API is shown in the chat', async ({ page }) => {
+  await page.route('**/api/assistant/status', (route) => json(route, { enabled: true, available: true }));
+  await page.route('**/api/assistant/chat/stream', (route) =>
+    route.request().method() === 'OPTIONS'
+      ? route.fulfill({ status: 204, headers: CORS })
+      : route.fulfill({
+          status: 429,
+          headers: CORS,
+          contentType: 'application/json',
+          body: JSON.stringify({ statusCode: 429, code: 'IP_LIMIT', message: 'You have reached the daily number of questions.' }),
+        }),
+  );
+  await openBookingPage(page);
+  await page.getByRole('button', { name: 'Ask the AI assistant' }).click();
+  const panel = page.getByRole('dialog', { name: 'Booking assistant' });
+  await panel.getByRole('textbox').fill('Tennis tomorrow?');
+  await panel.getByRole('button', { name: 'Send' }).click();
+  await expect(panel.getByText('Tennis tomorrow?')).toBeVisible();
+  await expect(panel).toContainText("You've reached today's number of questions.");
 });
 
 test('the assistant button is hidden when the API has no AI key', async ({ page, request }) => {

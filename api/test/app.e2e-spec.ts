@@ -45,15 +45,15 @@ const bookingBody = (startsAt: string, durationMinutes = 60) => ({
 });
 
 /** Scripted stand-in for the Claude API, so CI never calls (or pays for) the real model. */
-type LlmStep = (request: Anthropic.MessageCreateParamsNonStreaming) => Partial<Anthropic.Message>;
+type LlmStep = (request: Anthropic.MessageStreamParams) => Partial<Anthropic.Message>;
 const llmScript: LlmStep[] = [];
-const llmRequests: Anthropic.MessageCreateParamsNonStreaming[] = [];
+const llmRequests: Anthropic.MessageStreamParams[] = [];
 const fakeLlm: AssistantLlm = {
-  createMessage: async (params) => {
+  streamMessage: async (params, { onText }) => {
     llmRequests.push(structuredClone(params));
     const step = llmScript.shift();
     if (!step) throw new Error('Unexpected call to the model');
-    return {
+    const message = {
       id: 'msg_e2e',
       type: 'message',
       role: 'assistant',
@@ -63,9 +63,14 @@ const fakeLlm: AssistantLlm = {
       usage: { input_tokens: 2000, output_tokens: 200 },
       ...step(params),
     } as Anthropic.Message;
+    // Text is sent word by word, like the real stream.
+    for (const block of message.content) {
+      if (block.type === 'text') for (const word of block.text.split(/(?<= )/)) onText?.(word);
+    }
+    return message;
   },
 };
-const lastToolResult = (req: Anthropic.MessageCreateParamsNonStreaming) => {
+const lastToolResult = (req: Anthropic.MessageStreamParams) => {
   const content = req.messages.at(-1)!.content as Anthropic.ToolResultBlockParam[];
   return JSON.parse(content[0].content as string);
 };
@@ -335,6 +340,59 @@ describe('AI booking assistant (scripted model)', () => {
     expect(usage.requests).toBeGreaterThan(0);
     expect(usage.inputTokens).toBeGreaterThanOrEqual(3 * 2000);
     expect(usage.costMicroUsd).toBeGreaterThan(0);
+  });
+
+  it('streams the answer as newline-delimited JSON and caches the fixed part of the prompt', async () => {
+    llmRequests.length = 0;
+    llmScript.push(
+      () => ({
+        stop_reason: 'tool_use',
+        content: [
+          { type: 'text', text: 'Let me check.', citations: null },
+          { type: 'tool_use', id: 'call_1', name: 'get_venue_info', input: {} },
+        ],
+      }),
+      () => ({ content: [{ type: 'text', text: 'We have padel, tennis and football courts.', citations: null }] }),
+    );
+    const res = await request(app.getHttpServer())
+      .post('/api/assistant/chat/stream')
+      .send({ language: 'en', messages: [{ role: 'user', content: 'Which sports do you have?' }] })
+      .expect(200)
+      .expect('Content-Type', /application\/x-ndjson/);
+
+    const events = res.text.trim().split('\n').map((line) => JSON.parse(line));
+    expect(events.at(-1)).toEqual({ type: 'done', reply: 'Let me check.\n\nWe have padel, tennis and football courts.', suggestions: [] });
+    expect(events).toContainEqual({ type: 'tool', name: 'get_venue_info' });
+    const streamed = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
+    expect(streamed).toBe(events.at(-1).reply);
+    expect(events.filter((e) => e.type === 'text').length).toBeGreaterThan(5);
+    // The tool event comes after the first round's text and before the second round's.
+    expect(events.findIndex((e) => e.type === 'tool')).toBeGreaterThan(events.findIndex((e) => e.text === 'check.'));
+
+    // Fixed instructions carry the cache breakpoint; the changing date comes after it.
+    const system = llmRequests[0].system as Anthropic.TextBlockParam[];
+    expect(system[0].cache_control).toEqual({ type: 'ephemeral' });
+    expect(system[1].text).toMatch(/^Current local date and time/);
+    expect(system[1].cache_control).toBeUndefined();
+    // Same tools and fixed instructions in every call, so the cached prefix matches.
+    expect(llmRequests[1].tools).toEqual(llmRequests[0].tools);
+    expect(llmRequests[1].system).toEqual(llmRequests[0].system);
+  });
+
+  it('sends limit errors on the streaming route as normal JSON errors', async () => {
+    const date = today();
+    const before = await prisma.assistantUsage.findUniqueOrThrow({ where: { date } });
+    await prisma.assistantUsage.update({ where: { date }, data: { requests: 1_000_000 } });
+    try {
+      const res = await request(app.getHttpServer())
+        .post('/api/assistant/chat/stream')
+        .send({ messages: [{ role: 'user', content: 'Tennis tomorrow?' }] })
+        .expect(429)
+        .expect('Content-Type', /application\/json/);
+      expect(res.body.code).toBe('DAILY_LIMIT');
+    } finally {
+      await prisma.assistantUsage.update({ where: { date }, data: { requests: before.requests } });
+    }
   });
 
   it('validates the conversation', async () => {

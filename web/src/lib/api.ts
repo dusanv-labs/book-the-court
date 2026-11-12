@@ -62,11 +62,70 @@ async function request<T>(path: string, { method = 'GET', body, token }: Request
   const data: unknown = await res.json().catch(() => null);
   if (!res.ok) {
     if (res.status === 401 && token) onUnauthorized?.();
-    const { message, code } = (data as { message?: string | string[]; code?: string } | null) ?? {};
-    const messages = Array.isArray(message) ? message : [message ?? `Request failed (${res.status})`];
-    throw new ApiError(res.status, messages, code);
+    throw errorFromBody(res.status, data);
   }
   return data as T;
+}
+
+function errorFromBody(status: number, data: unknown): ApiError {
+  const { message, code } = (data as { message?: string | string[]; code?: string } | null) ?? {};
+  const messages = Array.isArray(message) ? message : [message ?? `Request failed (${status})`];
+  return new ApiError(status, messages, code);
+}
+
+type AssistantChatBody = { language: 'en' | 'sr'; messages: { role: 'user' | 'assistant'; content: string }[] };
+type AssistantStreamEvent =
+  | { type: 'text'; text: string }
+  | { type: 'tool'; name: string }
+  | ({ type: 'done' } & AssistantReply)
+  | { type: 'error'; code: string };
+
+/**
+ * Asks the assistant and reads the answer while it is written (newline-delimited JSON).
+ * Limit errors arrive as a normal error response before the stream starts; errors during it as an event.
+ */
+async function assistantChatStream(
+  body: AssistantChatBody,
+  handlers: { onText: (delta: string) => void; onTool: (name: string) => void },
+  signal?: AbortSignal,
+): Promise<AssistantReply> {
+  const lost = () => new ApiError(0, ['Cannot reach the server. Please check your connection and try again.']);
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/assistant/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    throw signal?.aborted ? e : lost();
+  }
+  if (!res.ok || !res.body) throw errorFromBody(res.status, await res.json().catch(() => null));
+
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  for (;;) {
+    let chunk: ReadableStreamReadResult<string>;
+    try {
+      chunk = await reader.read();
+    } catch (e) {
+      throw signal?.aborted ? e : lost();
+    }
+    if (chunk.done) throw lost(); // the stream ended without an answer
+    buffer += chunk.value;
+    let newline: number;
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (!line) continue;
+      const event = JSON.parse(line) as AssistantStreamEvent;
+      if (event.type === 'text') handlers.onText(event.text);
+      else if (event.type === 'tool') handlers.onTool(event.name);
+      else if (event.type === 'done') return { reply: event.reply, suggestions: event.suggestions };
+      else throw new ApiError(event.code === 'UNAVAILABLE' ? 503 : 500, [event.code], event.code);
+    }
+  }
 }
 
 const q = (params: Record<string, string | number>) =>
@@ -89,8 +148,8 @@ export const api = {
   cancel: (token: string) =>
     request<{ status: string }>(`/bookings/manage/${encodeURIComponent(token)}/cancel`, { method: 'POST' }),
   assistantStatus: () => request<AssistantStatus>('/assistant/status'),
-  assistantChat: (body: { language: 'en' | 'sr'; messages: { role: 'user' | 'assistant'; content: string }[] }) =>
-    request<AssistantReply>('/assistant/chat', { method: 'POST', body }),
+  assistantChat: (body: AssistantChatBody) => request<AssistantReply>('/assistant/chat', { method: 'POST', body }),
+  assistantChatStream,
   login: (email: string, password: string) =>
     request<{ accessToken: string }>('/auth/login', { method: 'POST', body: { email, password } }),
 
