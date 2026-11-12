@@ -44,7 +44,9 @@ A full-stack sports court booking system (padel, tennis, football): players pick
 **Engineering highlights**
 - Double booking prevented at the database level (PostgreSQL exclusion constraint), verified by a test that fires 8 simultaneous requests for the same slot
 - Time zone and daylight saving time handled correctly: stored in UTC, opening hours and prices defined in local time
-- Business logic (availability, pricing, revenue report) as pure functions covered by unit tests; end-to-end tests against a real PostgreSQL database in CI
+- Business logic (availability, pricing, revenue report) as pure functions covered by unit tests; API end-to-end tests against a real PostgreSQL database in CI
+- Browser tests (Playwright, desktop and phone) click through booking, cancellation, admin login, the revenue report and the assistant, against the whole app started with Docker Compose in CI
+- One-command local setup with Docker Compose (PostgreSQL, API with demo data, web app)
 - JWT admin authentication, scrypt password hashing, rate limiting, security headers, Zod validation, OpenAPI docs
 - Admin pages and export libraries are lazy-loaded, so players download only what they need
 - AI assistant built as a tool-use agent (see below): read-only tools, suggestions re-checked by the booking rules, no customer data exposed to the model, daily budget and per-IP limits, tested in CI with a scripted model
@@ -73,10 +75,41 @@ A full-stack sports court booking system (padel, tennis, football): players pick
 | Web (`web/`) | React, TypeScript, Vite, Tailwind CSS, TanStack Query, React Hook Form, Zod |
 | AI | Claude API (`@anthropic-ai/sdk`), model Claude Haiku 5.5, tool use |
 | Exports | write-excel-file (XLSX), pdfmake (PDF) |
-| CI/CD | GitHub Actions (lint, unit + e2e tests, Pages deploy, nightly demo reset), Render Blueprint |
+| Tests | Vitest (unit, API end-to-end), Playwright (browser) |
+| CI/CD | GitHub Actions (lint, unit, API end-to-end and browser tests, Pages deploy, nightly demo reset), Docker Compose, Render Blueprint |
 | Hosting | GitHub Pages (web), Render (API), Neon (PostgreSQL) |
 
 ## Running locally
+
+### With Docker (quickest)
+
+Requirements: [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
+```bash
+docker compose up --build
+```
+
+This starts PostgreSQL, applies the migrations, adds the demo data and serves:
+
+- web app: http://localhost:8080
+- API: http://localhost:3000/api (docs: http://localhost:3000/api/docs)
+- admin login: `demo@example.com` / `court-demo-2026`
+
+The AI assistant stays off unless `ANTHROPIC_API_KEY` is set in your shell. Stop with `docker compose down` (add `-v` to delete the database).
+
+### Browser tests
+
+With the app running in Docker:
+
+```bash
+npm install
+npx playwright install chromium
+npm run test:browser
+```
+
+The tests book and cancel a court on desktop and phone screens, and check form validation, language switching and that the page fits small screens. They also log in as the admin, open the revenue report and check the AI assistant's booking cards. The assistant's endpoints are answered by the test itself, so the real model is never called. `APP_URL` and `API_URL` point the tests at another running copy of the app.
+
+### Without Docker
 
 Requirements: Node.js 22+ and a PostgreSQL database (for example a free [Neon](https://neon.tech) project).
 
@@ -90,7 +123,7 @@ npm run dev:api                     # http://localhost:3000/api  (docs: /api/doc
 npm run dev:web                     # http://localhost:5173
 ```
 
-Other scripts: `npm run lint`, `npm test` (unit), `npm run test:e2e` (against a real database), `npm run build`.
+Other scripts: `npm run lint`, `npm test` (unit), `npm run test:e2e` (API tests against a real database), `npm run test:browser` (Playwright), `npm run build`.
 
 ## API overview
 

@@ -1,0 +1,60 @@
+# Runs the whole app locally with one command:  docker compose up --build
+#   web  http://localhost:8080
+#   API  http://localhost:3000/api  (docs: /api/docs)
+#   DB   localhost:5433  (user/password/db: btc)
+# Everything here is for local use only; the values below are not used in production.
+# The AI assistant stays off unless ANTHROPIC_API_KEY is set in your shell.
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: btc
+      POSTGRES_PASSWORD: btc # pragma: allowlist secret (local-only database)
+      POSTGRES_DB: btc
+    ports: ['5433:5432']
+    volumes: [db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U btc']
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://btc:btc@db:5432/btc # pragma: allowlist secret (local-only database)
+      JWT_SECRET: local-docker-only-signing-key-0123456789 # pragma: allowlist secret (local-only value)
+      CORS_ORIGINS: http://localhost:8080,http://localhost:5173
+      # Same public demo login as the live demo.
+      SEED_ADMIN_EMAIL: demo@example.com
+      SEED_ADMIN_PASSWORD: court-demo-2026 # pragma: allowlist secret (public demo login)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports: ['3000:3000']
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://localhost:3000/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3000/api
+        VITE_DEMO_EMAIL: demo@example.com
+        VITE_DEMO_PASSWORD: court-demo-2026 # pragma: allowlist secret (public demo login)
+    depends_on:
+      api:
+        condition: service_healthy
+    ports: ['8080:80']
+
+volumes:
+  db-data:

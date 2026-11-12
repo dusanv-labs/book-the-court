@@ -20,6 +20,8 @@ vendor/
 dist/
 build/
 coverage/
+e2e/playwright-report/
+e2e/test-results/
 .cache/
 
 # --- Logs, dumps, local data ---

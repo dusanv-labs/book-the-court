@@ -4,15 +4,19 @@
   "description": "Sports court booking system - NestJS API + React web app",
   "workspaces": [
     "api",
-    "web"
+    "web",
+    "e2e"
   ],
   "scripts": {
     "dev:api": "npm run start:dev -w api",
     "dev:web": "npm run dev -w web",
-    "lint": "npm run lint -w api && npm run lint -w web",
+    "lint": "npm run lint -w api && npm run lint -w web && npm run lint -w e2e",
     "test": "npm run test -w api && npm run test -w web",
     "test:e2e": "npm run test:e2e -w api",
-    "build": "npm run build -w api && npm run build -w web"
+    "build": "npm run build -w api && npm run build -w web",
+    "test:browser": "npm test -w e2e",
+    "docker:up": "docker compose up --build --wait",
+    "docker:down": "docker compose down"
   },
   "engines": {
     "node": ">=22"

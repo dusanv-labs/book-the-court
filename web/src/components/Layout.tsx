@@ -11,7 +11,7 @@ export function Logo() {
         <rect x="7" y="7" width="18" height="18" rx="1.5" fill="none" stroke="#fff" strokeWidth="2" />
         <path d="M16 7v18M7 16h18" stroke="#fff" strokeWidth="2" />
       </svg>
-      <span className="hidden text-lg min-[400px]:inline">
+      <span className="hidden text-lg min-[480px]:inline">
         Book<span className="text-emerald-600">The</span>Court
       </span>
     </Link>
@@ -19,7 +19,7 @@ export function Logo() {
 }
 
 const navClass = ({ isActive }: { isActive: boolean }) =>
-  `rounded-lg px-3 py-2 text-sm font-medium whitespace-nowrap ${isActive ? 'bg-emerald-50 text-emerald-700' : 'text-slate-600 hover:bg-slate-100'}`;
+  `rounded-lg px-2 py-2 text-sm font-medium whitespace-nowrap sm:px-3 ${isActive ? 'bg-emerald-50 text-emerald-700' : 'text-slate-600 hover:bg-slate-100'}`;
 
 function LanguageSwitch() {
   const { lang, setLang, m } = useI18n();
